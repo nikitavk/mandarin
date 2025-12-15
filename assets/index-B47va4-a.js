@@ -4041,7 +4041,6 @@ void main() {
       <p id="title-stats" style="font-size: 1rem; color: #88cc88; margin-bottom: 1rem;"></p>
       <p style="font-size: 1rem; color: #66aa66; margin-bottom: 1.5rem;">${it.tapToStart}</p>
       <button id="donate-btn" style="
-        display: none;
         padding: 0.6rem 1.2rem;
         font-size: 1rem;
         background: linear-gradient(135deg, #ffaa00, #ff8800);
@@ -4052,7 +4051,7 @@ void main() {
         font-weight: bold;
         box-shadow: 0 2px 8px rgba(255, 136, 0, 0.4);
       ">${it.donateStars}</button>
-    `;const t=r=>{r.target.id!=="donate-btn"&&this.startGame()};e.addEventListener("click",t),e.addEventListener("touchstart",r=>{r.target.id!=="donate-btn"&&(r.preventDefault(),this.startGame())});const n=e.querySelector("#donate-btn");return n&&(n.addEventListener("click",r=>{r.stopPropagation(),this.handleDonate()}),n.addEventListener("touchstart",r=>{r.stopPropagation()}),n.style.display="block"),this.uiContainer.appendChild(e),e}createGameOverScreen(){const e=document.createElement("div");return e.id="game-over-screen",e.style.cssText=`
+    `;const t=r=>{r.target.id!=="donate-btn"&&this.startGame()};e.addEventListener("click",t),e.addEventListener("touchstart",r=>{r.target.id!=="donate-btn"&&(r.preventDefault(),this.startGame())});const n=e.querySelector("#donate-btn");return n&&(n.addEventListener("click",r=>{r.stopPropagation(),this.handleDonate()}),n.addEventListener("touchstart",r=>{r.stopPropagation()})),this.uiContainer.appendChild(e),e}createGameOverScreen(){const e=document.createElement("div");return e.id="game-over-screen",e.style.cssText=`
       position: absolute;
       top: 0;
       left: 0;
