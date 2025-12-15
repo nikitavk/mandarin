@@ -4043,13 +4043,16 @@ void main() {
       <p style="font-size: 1rem; color: #66aa66; margin-bottom: 1.5rem;">${it.tapToStart}</p>
       <div style="display: flex; align-items: center; gap: 0.5rem;">
         <select id="donate-amount" style="
-          padding: 0.6rem;
-          font-size: 1rem;
+          padding: 0.8rem;
+          font-size: 1.1rem;
           background: #1a3d24;
           border: 2px solid #ff8800;
           border-radius: 8px;
           color: white;
           cursor: pointer;
+          min-width: 120px;
+          -webkit-appearance: none;
+          appearance: none;
         ">
           <option value="1">1 ⭐</option>
           <option value="5">5 ⭐</option>
