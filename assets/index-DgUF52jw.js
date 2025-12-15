@@ -32,29 +32,40 @@ import{Q as E,E as D,C as z,R as j,V as A,P as lt,M as W,a as C,B as rt,F as Z,b
       <p id="title-stats" style="font-size: 1rem; color: #88cc88; margin-bottom: 1rem;"></p>
       <p style="font-size: 1rem; color: #66aa66; margin-bottom: 1.5rem;">${w.tapToStart}</p>
       <div style="display: flex; align-items: center; gap: 0.5rem;">
-        <select id="donate-amount" style="
-          padding: 0.8rem;
-          font-size: 1.1rem;
-          background: #1a3d24;
-          border: 2px solid #ff8800;
-          border-radius: 8px;
-          color: white;
-          cursor: pointer;
-          min-width: 120px;
-          -webkit-appearance: none;
-          appearance: none;
-        ">
-          <option value="1">1 ⭐</option>
-          <option value="5">5 ⭐</option>
-          <option value="10">10 ⭐</option>
-          <option value="50" selected>50 ⭐</option>
-          <option value="100">100 ⭐</option>
-          <option value="500">500 ⭐</option>
-          <option value="1000">1000 ⭐</option>
-          <option value="5000">5000 ⭐</option>
-          <option value="10000">10000 ⭐</option>
-          <option value="100000">100000 ⭐</option>
-        </select>
+        <div style="position: relative;">
+          <select id="donate-amount" style="
+            padding: 0.8rem 2.5rem 0.8rem 1rem;
+            font-size: 1.1rem;
+            background: #1a3d24;
+            border: 2px solid #ff8800;
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+            min-width: 120px;
+            -webkit-appearance: none;
+            appearance: none;
+          ">
+            <option value="1">1 ⭐</option>
+            <option value="5">5 ⭐</option>
+            <option value="10">10 ⭐</option>
+            <option value="50" selected>50 ⭐</option>
+            <option value="100">100 ⭐</option>
+            <option value="500">500 ⭐</option>
+            <option value="1000">1000 ⭐</option>
+            <option value="5000">5000 ⭐</option>
+            <option value="10000">10000 ⭐</option>
+            <option value="100000">100000 ⭐</option>
+          </select>
+          <span style="
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            pointer-events: none;
+            color: #ff8800;
+            font-size: 0.8rem;
+          ">▼</span>
+        </div>
         <button id="donate-btn" style="
           padding: 0.6rem 1.2rem;
           font-size: 1rem;
