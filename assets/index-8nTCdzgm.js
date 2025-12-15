@@ -4052,15 +4052,15 @@ void main() {
           cursor: pointer;
         ">
           <option value="1">1 ⭐</option>
+          <option value="5">5 ⭐</option>
           <option value="10">10 ⭐</option>
           <option value="50" selected>50 ⭐</option>
           <option value="100">100 ⭐</option>
           <option value="500">500 ⭐</option>
-          <option value="1000">1K ⭐</option>
-          <option value="10000">10K ⭐</option>
-          <option value="100000">100K ⭐</option>
-          <option value="1000000">1M ⭐</option>
-          <option value="1000000000">1B ⭐</option>
+          <option value="1000">1000 ⭐</option>
+          <option value="5000">5000 ⭐</option>
+          <option value="10000">10000 ⭐</option>
+          <option value="100000">100000 ⭐</option>
         </select>
         <button id="donate-btn" style="
           padding: 0.6rem 1.2rem;
