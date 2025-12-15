@@ -4031,7 +4031,8 @@ void main() {
       pointer-events: auto;
       cursor: pointer;
     `,e.innerHTML=`
-      <h1 style="font-size: 3rem; margin-bottom: 1rem; color: #ff8833;">${it.title}</h1>
+      <h1 style="font-size: 3rem; margin-bottom: 0.5rem; color: #ff8833;">${it.title}</h1>
+      <a href="https://t.me/nikita_kv" target="_blank" style="font-size: 0.9rem; color: #88aa88; text-decoration: none; margin-bottom: 1rem; display: block;">by @nikita_kv</a>
       <p style="font-size: 1.2rem; color: #ffcc88; margin-bottom: 1.5rem;">${it.subtitle}</p>
       <div id="title-leaderboard" style="margin-bottom: 1.5rem; display: none;">
         <h3 style="font-size: 1rem; color: #ffdd44; margin-bottom: 0.5rem;">${it.leaderboard}</h3>
@@ -4067,7 +4068,7 @@ void main() {
           box-shadow: 0 2px 8px rgba(255, 136, 0, 0.4);
         ">${it.donateStars}</button>
       </div>
-    `;const t=s=>{const a=s.target;a.id==="donate-btn"||a.id==="donate-amount"||this.startGame()};e.addEventListener("click",t),e.addEventListener("touchstart",s=>{const a=s.target;a.id==="donate-btn"||a.id==="donate-amount"||(s.preventDefault(),this.startGame())});const n=e.querySelector("#donate-btn"),r=e.querySelector("#donate-amount");return n&&r&&(n.addEventListener("click",s=>{s.stopPropagation();const a=parseInt(r.value,10);this.handleDonate(a)}),n.addEventListener("touchstart",s=>{s.stopPropagation()}),r.addEventListener("click",s=>{s.stopPropagation()}),r.addEventListener("touchstart",s=>{s.stopPropagation()})),this.uiContainer.appendChild(e),e}createGameOverScreen(){const e=document.createElement("div");return e.id="game-over-screen",e.style.cssText=`
+    `;const t=s=>{const a=s.target;a.id==="donate-btn"||a.id==="donate-amount"||a.tagName==="A"||this.startGame()};e.addEventListener("click",t),e.addEventListener("touchstart",s=>{const a=s.target;a.id==="donate-btn"||a.id==="donate-amount"||a.tagName==="A"||(s.preventDefault(),this.startGame())});const n=e.querySelector("#donate-btn"),r=e.querySelector("#donate-amount");return n&&r&&(n.addEventListener("click",s=>{s.stopPropagation();const a=parseInt(r.value,10);this.handleDonate(a)}),n.addEventListener("touchstart",s=>{s.stopPropagation()}),r.addEventListener("click",s=>{s.stopPropagation()}),r.addEventListener("touchstart",s=>{s.stopPropagation()})),this.uiContainer.appendChild(e),e}createGameOverScreen(){const e=document.createElement("div");return e.id="game-over-screen",e.style.cssText=`
       position: absolute;
       top: 0;
       left: 0;
