@@ -88,10 +88,10 @@ export function createPeelTexture(size: number = 256): THREE.CanvasTexture {
       const u = x / size;
       const v = y / size;
 
-      // Base orange color - bright vibrant orange for peel
+      // Base orange color - bright vibrant orange for peel (0xff6600)
       let r = 255;
-      let g = 120;
-      let b = 20;
+      let g = 102;
+      let b = 0;
 
       // Large cellular pattern (pores on orange skin)
       const cell1 = cellularNoise(u * 8 + 0.5, v * 8 + 0.5, 3);

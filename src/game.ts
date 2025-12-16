@@ -13,6 +13,9 @@ import { updateCellVisual } from './voronoi';
 import { InputManager, InputState } from './input';
 import { PeelStrip } from './peelStrip';
 import { i18n } from './i18n';
+import { telegram, submitScore, getLeaderboard, createDonationInvoice } from './telegram';
+import { line } from './line';
+import { ChristmasEmojiBackground } from './christmasEmoji';
 
 // Juice particle for spray effect
 interface JuiceParticle {
@@ -72,25 +75,32 @@ export class Game {
 
   // Stats tracking
   private streak: number = 0;
+  private bestStreak: number = 0;
   private totalTries: number = 0;
   private totalWins: number = 0;
+  private lastWinTime: string = '';
+
+  // Streak HUD element
+  private streakHUD: HTMLDivElement | null = null;
+
+  // Stem falling animation
+  private stem: THREE.Group | null = null;
+  private stemFalling: boolean = false;
+  private stemVelocity: THREE.Vector3 = new THREE.Vector3();
+  private stemRotationVelocity: THREE.Vector3 = new THREE.Vector3();
+
+  // Christmas background
+  private emojiBackground: ChristmasEmojiBackground | null = null;
+
 
   constructor() {
     // Initialize Three.js
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x1a3a2a);
+    this.scene.background = null; // Transparent to show HTML background
 
     // Add lights for MeshStandardMaterial
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     this.scene.add(ambientLight);
-
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(5, 5, 5);
-    this.scene.add(directionalLight);
-
-    const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
-    directionalLight2.position.set(-5, -5, 5);
-    this.scene.add(directionalLight2);
 
     this.camera = new THREE.PerspectiveCamera(
       50,
@@ -100,7 +110,18 @@ export class Game {
     );
     this.camera.position.z = 5.5;
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Add directional lights as children of camera so they rotate with it
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(1, 1, 1); // In front and slightly above/right in camera space
+    this.camera.add(directionalLight);
+
+    const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
+    directionalLight2.position.set(-1, -1, 1); // Fill light from opposite side
+    this.camera.add(directionalLight2);
+
+    this.scene.add(this.camera); // Camera must be in scene for its children to render
+
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     document.body.appendChild(this.renderer.domElement);
@@ -129,6 +150,9 @@ export class Game {
     // Create edge indicators
     this.createEdgeIndicators();
 
+    // Create streak HUD
+    this.createStreakHUD();
+
     // Initialize juice particle system
     this.juiceGeometry = new THREE.SphereGeometry(0.15, 8, 8);
     this.juiceMaterial = new THREE.MeshBasicMaterial({
@@ -139,6 +163,9 @@ export class Game {
 
     // Load saved stats
     this.loadStats();
+
+    // Create Christmas emoji background (self-managing, no reference needed)
+    this.emojiBackground = new ChristmasEmojiBackground(25);
 
     // Show title screen
     this.showScreen('title');
@@ -159,29 +186,20 @@ export class Game {
       opacity: 0, // Hidden by default, shown briefly on side change
     });
 
-    // Position indicators in local space relative to camera
-    // In camera's local space: -Z is forward, +Y is up, +X is right
-    const distance = 1.1; // Distance from center on screen
-    const zOffset = -2.5; // In front of camera (negative Z = forward in camera space)
-
     // Top indicator (player swipes up to go to top side)
     const topIndicator = new THREE.Mesh(horzGeometry, indicatorMaterial.clone());
-    topIndicator.position.set(0, distance, zOffset);
     topIndicator.name = 'indicator-top';
 
     // Bottom indicator (player swipes down to go to bottom side)
     const bottomIndicator = new THREE.Mesh(horzGeometry, indicatorMaterial.clone());
-    bottomIndicator.position.set(0, -distance, zOffset);
     bottomIndicator.name = 'indicator-bottom';
 
     // Left indicator (player swipes left to go to left side)
     const leftIndicator = new THREE.Mesh(vertGeometry, indicatorMaterial.clone());
-    leftIndicator.position.set(-distance, 0, zOffset);
     leftIndicator.name = 'indicator-left';
 
     // Right indicator (player swipes right to go to right side)
     const rightIndicator = new THREE.Mesh(vertGeometry, indicatorMaterial.clone());
-    rightIndicator.position.set(distance, 0, zOffset);
     rightIndicator.name = 'indicator-right';
 
     this.edgeIndicatorGroup.add(topIndicator, bottomIndicator, leftIndicator, rightIndicator);
@@ -193,6 +211,136 @@ export class Game {
       left: leftIndicator,
       right: rightIndicator,
     };
+
+    // Position indicators based on current aspect ratio
+    this.updateEdgeIndicatorPositions();
+  }
+
+  private createStreakHUD(): void {
+    this.streakHUD = document.createElement('div');
+    this.streakHUD.id = 'streak-hud';
+    this.streakHUD.style.cssText = `
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 1.5rem;
+      font-weight: bold;
+      color: #ffcc00;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.3s;
+      z-index: 100;
+    `;
+    document.body.appendChild(this.streakHUD);
+  }
+
+  private updateStreakHUD(): void {
+    if (!this.streakHUD) return;
+
+    if (this.state.status === 'playing' && this.streak > 0) {
+      const cellsPerSide = this.getCellsPerSide();
+      this.streakHUD.textContent = `🔥 ${this.streak} | ${cellsPerSide} cells`;
+      this.streakHUD.style.opacity = '1';
+    } else if (this.state.status === 'playing') {
+      const cellsPerSide = this.getCellsPerSide();
+      this.streakHUD.textContent = `${cellsPerSide} cells`;
+      this.streakHUD.style.opacity = '1';
+    } else {
+      this.streakHUD.style.opacity = '0';
+    }
+  }
+
+  // Calculate cells per side based on streak: 1, 3, 5, 7, 9... (each round)
+  private getCellsPerSide(): number {
+    // streak 0 → 1 cell, streak 1 → 3, streak 2 → 5, streak 3 → 7, etc.
+    return 1 + this.streak * 2;
+  }
+
+  private updateEdgeIndicatorPositions(): void {
+    if (!this.edgeIndicators) return;
+
+    const zOffset = -2.5; // In front of camera
+    const aspect = this.camera.aspect;
+    const fov = this.camera.fov * (Math.PI / 180);
+
+    // Calculate visible height/width at zOffset distance
+    const visibleHeight = 2 * Math.tan(fov / 2) * Math.abs(zOffset);
+    const visibleWidth = visibleHeight * aspect;
+
+    // Position indicators near edges (80% towards edge)
+    const edgeFactor = 0.80;
+    const verticalDist = (visibleHeight / 2) * edgeFactor;
+    const horizontalDist = (visibleWidth / 2) * edgeFactor;
+
+    this.edgeIndicators.top.position.set(0, verticalDist, zOffset);
+    this.edgeIndicators.bottom.position.set(0, -verticalDist, zOffset);
+    this.edgeIndicators.left.position.set(-horizontalDist, 0, zOffset);
+    this.edgeIndicators.right.position.set(horizontalDist, 0, zOffset);
+  }
+
+  // Check if going to a specific side leaves a viable path to complete the game
+  // Uses DFS to find a Hamiltonian path through all remaining unpeeled sides
+  private canCompleteFromSide(startSideId: number, alreadyPeeled: Set<number>): boolean {
+    const unpeeledSides = new Set<number>();
+    for (let i = 0; i < 6; i++) {
+      if (!alreadyPeeled.has(i)) {
+        unpeeledSides.add(i);
+      }
+    }
+
+    // If no unpeeled sides, we're done
+    if (unpeeledSides.size === 0) return true;
+
+    // If start side is already peeled, invalid
+    if (alreadyPeeled.has(startSideId)) return false;
+
+    // DFS to find a Hamiltonian path - we need to visit ALL unpeeled sides
+    // in some order without backtracking through peeled sides
+    const findPath = (current: number, visited: Set<number>): boolean => {
+      visited.add(current);
+
+      // If we've visited all unpeeled sides, success!
+      if (visited.size === unpeeledSides.size) {
+        return true;
+      }
+
+      const side = this.state.sides[current];
+
+      // Try each adjacent unpeeled side
+      for (const edge of ['top', 'bottom', 'left', 'right'] as const) {
+        const adjacentId = side.adjacent[edge];
+        if (!visited.has(adjacentId) && unpeeledSides.has(adjacentId)) {
+          if (findPath(adjacentId, visited)) {
+            return true;
+          }
+        }
+      }
+
+      // Backtrack
+      visited.delete(current);
+      return false;
+    };
+
+    return findPath(startSideId, new Set());
+  }
+
+  // Check if a path through a specific edge leads to a completable game state
+  private isPathViable(fromSideId: number, toSideId: number): boolean {
+    // Create set of sides that would be peeled after this transition
+    const wouldBePeeled = new Set<number>();
+    for (const side of this.state.sides) {
+      if (side.peeled) {
+        wouldBePeeled.add(side.id);
+      }
+    }
+    // Current side will be peeled when we transition
+    wouldBePeeled.add(fromSideId);
+
+    // Check if we can complete the game starting from toSideId
+    return this.canCompleteFromSide(toSideId, wouldBePeeled);
   }
 
   private updateEdgeIndicators(): void {
@@ -222,17 +370,20 @@ export class Game {
       return rotationMap[steps][screenEdge];
     };
 
-    // Update each indicator - mark available ones green, hide unavailable completely
+    // Update each indicator
     for (const screenEdge of screenEdges) {
       const indicator = this.edgeIndicators[screenEdge];
       const material = indicator.material as THREE.MeshBasicMaterial;
       const logicalEdge = getLogicalEdge(screenEdge);
       const adjacentSideId = currentSide.adjacent[logicalEdge];
-      const isAvailable = !this.state.sides[adjacentSideId].peeled;
+      const isUnpeeled = !this.state.sides[adjacentSideId].peeled;
 
-      // Only orange for available, unavailable stays hidden
+      // Check if the path is viable (won't create a dead end)
+      const isViable = isUnpeeled && this.isPathViable(currentSide.id, adjacentSideId);
+
+      // Orange for viable paths, hide non-viable/already peeled
       material.color.setHex(0xff8833);
-      indicator.visible = isAvailable;
+      indicator.visible = isViable;
       material.opacity = 0;
     }
   }
@@ -398,6 +549,90 @@ export class Game {
     this.juiceParticles = [];
   }
 
+  private startStemFalling(): void {
+    if (!this.stem || this.stemFalling) return;
+
+    this.stemFalling = true;
+    // Initial velocity - pop up and outward
+    this.stemVelocity.set(
+      (Math.random() - 0.5) * 2,
+      3 + Math.random() * 2,  // Pop upward
+      (Math.random() - 0.5) * 2
+    );
+  }
+
+  private updateStemFalling(deltaTime: number): void {
+    if (!this.stem || !this.stemFalling) return;
+
+    // Apply gravity
+    this.stemVelocity.y -= 15 * deltaTime;
+
+    // Update position
+    this.stem.position.add(this.stemVelocity.clone().multiplyScalar(deltaTime));
+
+    // Update rotation (tumbling)
+    this.stem.rotation.x += this.stemRotationVelocity.x * deltaTime;
+    this.stem.rotation.y += this.stemRotationVelocity.y * deltaTime;
+    this.stem.rotation.z += this.stemRotationVelocity.z * deltaTime;
+
+    // Remove when fallen far enough
+    if (this.stem.position.y < -5) {
+      this.mandarinGroup?.remove(this.stem);
+      this.stem = null;
+      this.stemFalling = false;
+    }
+  }
+
+  private spawnVictoryJuiceBurst(): void {
+    const particleCount = 80 + Math.floor(Math.random() * 40); // 80-120 particles
+
+    // Direction towards camera
+    const toCamera = this.camera.position.clone().normalize();
+
+    for (let i = 0; i < particleCount; i++) {
+      // Larger particles for victory burst
+      const size = 0.1 + Math.random() * 0.25;
+      const geometry = new THREE.SphereGeometry(size, 8, 8);
+      const material = this.juiceMaterial.clone();
+
+      // Vary colors between orange and yellow
+      const hue = 0.08 + Math.random() * 0.05; // Orange to yellow-orange
+      material.color.setHSL(hue, 1.0, 0.5 + Math.random() * 0.2);
+
+      const mesh = new THREE.Mesh(geometry, material);
+
+      // Start from random position on the mandarin surface
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.random() * Math.PI;
+      const startPos = new THREE.Vector3(
+        Math.sin(phi) * Math.cos(theta),
+        Math.sin(phi) * Math.sin(theta),
+        Math.cos(phi)
+      ).multiplyScalar(1.1); // Slightly outside mandarin
+
+      mesh.position.copy(startPos);
+
+      // Velocity primarily towards camera with spread
+      const spread = 1.2;
+      const velocity = new THREE.Vector3(
+        toCamera.x + (Math.random() - 0.5) * spread,
+        toCamera.y + (Math.random() - 0.5) * spread + 0.3, // Slight upward bias
+        toCamera.z + (Math.random() - 0.5) * spread
+      );
+      velocity.normalize().multiplyScalar(4 + Math.random() * 6); // Fast burst
+
+      const particle: JuiceParticle = {
+        mesh,
+        velocity,
+        life: 0,
+        maxLife: 1.5 + Math.random() * 1.0, // Longer life for dramatic effect
+      };
+
+      this.juiceParticles.push(particle);
+      this.scene.add(mesh);
+    }
+  }
+
   private createInitialState(): GameState {
     return {
       status: 'title',
@@ -417,6 +652,7 @@ export class Game {
       if (saved) {
         const stats = JSON.parse(saved);
         this.streak = stats.streak ?? 0;
+        this.bestStreak = stats.bestStreak ?? 0;
         this.totalTries = stats.totalTries ?? 0;
         this.totalWins = stats.totalWins ?? 0;
       }
@@ -429,6 +665,7 @@ export class Game {
     try {
       localStorage.setItem('mandarin-stats', JSON.stringify({
         streak: this.streak,
+        bestStreak: this.bestStreak,
         totalTries: this.totalTries,
         totalWins: this.totalWins,
       }));
@@ -466,22 +703,134 @@ export class Game {
       flex-direction: column;
       justify-content: center;
       align-items: center;
-      background: rgba(26, 26, 46, 0.9);
+      background: rgba(20, 50, 30, 0.9);
       color: white;
       pointer-events: auto;
       cursor: pointer;
     `;
     screen.innerHTML = `
-      <h1 style="font-size: 3rem; margin-bottom: 1rem; color: #ff8833;">${i18n.title}</h1>
-      <p style="font-size: 1.2rem; color: #ffcc88; margin-bottom: 2rem;">${i18n.subtitle}</p>
-      <p id="title-stats" style="font-size: 1rem; color: #aaa; margin-bottom: 1rem;"></p>
-      <p style="font-size: 1rem; color: #888;">${i18n.tapToStart}</p>
+      <h1 style="font-size: 3rem; margin-bottom: 0.5rem; color: #ff8833;">${i18n.title}</h1>
+      <a id="author-link" href="https://t.me/nikita_kv" target="_blank" style="font-size: 0.9rem; color: #88aa88; text-decoration: none; margin-bottom: 1rem; display: block;">by @nikita_kv</a>
+      <p style="font-size: 1.2rem; color: #ffcc88; margin-bottom: 1.5rem;">${i18n.subtitle}</p>
+      <div id="title-leaderboard" style="margin-bottom: 1.5rem; display: none;">
+        <h3 style="font-size: 1rem; color: #ffdd44; margin-bottom: 0.5rem;">${i18n.leaderboard}</h3>
+        <table id="leaderboard-table" style="border-collapse: collapse; font-size: 0.9rem;">
+        </table>
+      </div>
+      <p id="title-stats" style="font-size: 1rem; color: #88cc88; margin-bottom: 1rem;"></p>
+      <p style="font-size: 1rem; color: #66aa66; margin-bottom: 1.5rem;">${i18n.tapToStart}</p>
+      <div id="donate-container" style="display: flex; align-items: center; gap: 0.5rem;">
+        <div style="position: relative;">
+          <select id="donate-amount" style="
+            padding: 0.8rem 2.5rem 0.8rem 1rem;
+            font-size: 1.1rem;
+            background: #1a3d24;
+            border: 2px solid #ff8800;
+            border-radius: 8px;
+            color: white;
+            cursor: pointer;
+            min-width: 120px;
+            -webkit-appearance: none;
+            appearance: none;
+          ">
+            <option value="1">1 ⭐</option>
+            <option value="5">5 ⭐</option>
+            <option value="10">10 ⭐</option>
+            <option value="50" selected>50 ⭐</option>
+            <option value="100">100 ⭐</option>
+            <option value="500">500 ⭐</option>
+            <option value="1000">1000 ⭐</option>
+            <option value="5000">5000 ⭐</option>
+            <option value="10000">10000 ⭐</option>
+            <option value="100000">100000 ⭐</option>
+          </select>
+          <span style="
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            pointer-events: none;
+            color: #ff8800;
+            font-size: 0.8rem;
+          ">▼</span>
+        </div>
+        <button id="donate-btn" style="
+          padding: 0.6rem 1.2rem;
+          font-size: 1rem;
+          background: linear-gradient(135deg, #ffaa00, #ff8800);
+          border: none;
+          border-radius: 8px;
+          color: white;
+          cursor: pointer;
+          font-weight: bold;
+          box-shadow: 0 2px 8px rgba(255, 136, 0, 0.4);
+        ">${i18n.donateStars}</button>
+      </div>
     `;
-    screen.addEventListener('click', () => this.startGame());
+
+    // Handle tap to start (but not on donate controls or links)
+    const startGame = (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.id === 'donate-btn' || target.id === 'donate-amount' || target.tagName === 'A') return;
+      this.startGame();
+    };
+    screen.addEventListener('click', startGame);
     screen.addEventListener('touchstart', (e) => {
+      const target = e.target as HTMLElement;
+      if (target.id === 'donate-btn' || target.id === 'donate-amount' || target.tagName === 'A') return;
       e.preventDefault();
       this.startGame();
     });
+
+    // Handle donate button (only show in Telegram)
+    const donateBtn = screen.querySelector('#donate-btn') as HTMLButtonElement;
+    const donateAmount = screen.querySelector('#donate-amount') as HTMLSelectElement;
+    const donateContainer = screen.querySelector('#donate-container') as HTMLElement;
+    if (donateContainer && !telegram.isAvailable) {
+      donateContainer.style.display = 'none';
+    }
+    if (donateBtn && donateAmount) {
+      donateBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const stars = parseInt(donateAmount.value, 10);
+        this.handleDonate(stars);
+      });
+      donateBtn.addEventListener('touchstart', (e) => {
+        e.stopPropagation();
+      });
+      donateAmount.addEventListener('click', (e) => {
+        e.stopPropagation();
+      });
+      donateAmount.addEventListener('touchstart', (e) => {
+        e.stopPropagation();
+      });
+    }
+
+    // Update author link based on platform (LINE vs Telegram)
+    const authorLink = screen.querySelector('#author-link') as HTMLAnchorElement;
+    if (authorLink) {
+      if (line.isInClient) {
+        // LINE app - link to LINE profile
+        authorLink.href = 'https://line.me/ti/p/~nikitose';
+        authorLink.textContent = 'by @nikitose';
+      } else if (telegram.isAvailable) {
+        // Telegram - keep Telegram link
+        authorLink.href = 'https://t.me/nikita_kv';
+        authorLink.textContent = 'by @nikita_kv';
+      } else {
+        // Web browser - show both
+        authorLink.href = 'https://t.me/nikita_kv';
+        authorLink.textContent = 'by @nikita_kv';
+      }
+    }
+
+    // Debug: log platform detection
+    console.log('[Platform]', {
+      lineInClient: line.isInClient,
+      lineAvailable: line.isAvailable,
+      telegramAvailable: telegram.isAvailable,
+    });
+
     this.uiContainer.appendChild(screen);
     return screen;
   }
@@ -499,17 +848,17 @@ export class Game {
       flex-direction: column;
       justify-content: center;
       align-items: center;
-      background: rgba(26, 26, 46, 0.9);
+      background: rgba(20, 50, 30, 0.9);
       color: white;
       pointer-events: auto;
       cursor: pointer;
     `;
     screen.innerHTML = `
-      <h1 style="font-size: 3rem; margin-bottom: 1rem; color: #ff4444;">${i18n.gameOver}</h1>
+      <h1 style="font-size: 3rem; margin-bottom: 1rem; color: #ff6633;">${i18n.gameOver}</h1>
       <p id="game-over-reason" style="font-size: 1.2rem; color: #ffcc88; margin-bottom: 1rem;"></p>
-      <p id="game-over-stats" style="font-size: 1rem; color: #888; margin-bottom: 1rem;"></p>
-      <p id="game-over-streak" style="font-size: 1rem; color: #aaa; margin-bottom: 2rem;"></p>
-      <p style="font-size: 1rem; color: #888;">${i18n.tapToTryAgain}</p>
+      <p id="game-over-stats" style="font-size: 1rem; color: #88cc88; margin-bottom: 1rem;"></p>
+      <p id="game-over-streak" style="font-size: 1rem; color: #ffaa66; margin-bottom: 2rem;"></p>
+      <p style="font-size: 1rem; color: #66aa66;">${i18n.tapToTryAgain}</p>
     `;
     screen.addEventListener('click', () => this.returnToTitle());
     screen.addEventListener('touchstart', (e) => {
@@ -533,19 +882,54 @@ export class Game {
       flex-direction: column;
       justify-content: center;
       align-items: center;
-      background: rgba(26, 26, 46, 0.9);
+      background: rgba(20, 50, 30, 0.9);
       color: white;
       pointer-events: auto;
       cursor: pointer;
     `;
     screen.innerHTML = `
-      <h1 style="font-size: 3rem; margin-bottom: 1rem; color: #44ff44;">${i18n.youWin}</h1>
+      <h1 style="font-size: 3rem; margin-bottom: 1rem; color: #66dd66;">${i18n.youWin}</h1>
       <p id="win-stats" style="font-size: 1.2rem; color: #ffcc88; margin-bottom: 1rem;"></p>
-      <p id="win-streak" style="font-size: 1rem; color: #aaa; margin-bottom: 2rem;"></p>
-      <p style="font-size: 1rem; color: #888;">${i18n.tapToPlayAgain}</p>
+      <p id="win-leaderboard" style="font-size: 1rem; color: #ffdd44; margin-bottom: 0.5rem; display: none;"></p>
+      <p id="win-streak" style="font-size: 1rem; color: #ffaa66; margin-bottom: 1.5rem;"></p>
+      <button id="share-btn" style="
+        padding: 0.8rem 1.5rem;
+        font-size: 1.1rem;
+        background: linear-gradient(135deg, #66dd66, #44bb44);
+        border: none;
+        border-radius: 8px;
+        color: white;
+        cursor: pointer;
+        font-weight: bold;
+        box-shadow: 0 2px 8px rgba(68, 187, 68, 0.4);
+        margin-bottom: 1.5rem;
+        display: none;
+      ">${i18n.share}</button>
+      <p style="font-size: 1rem; color: #66aa66;">${i18n.tapToPlayAgain}</p>
     `;
-    screen.addEventListener('click', () => this.returnToTitle());
+
+    // Handle share button
+    const shareBtn = screen.querySelector('#share-btn') as HTMLButtonElement;
+    if (shareBtn) {
+      shareBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.handleShare();
+      });
+      shareBtn.addEventListener('touchstart', (e) => {
+        e.stopPropagation();
+      });
+    }
+
+    // Handle tap to return (but not on share button)
+    const returnToTitle = (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.id === 'share-btn') return;
+      this.returnToTitle();
+    };
+    screen.addEventListener('click', returnToTitle);
     screen.addEventListener('touchstart', (e) => {
+      const target = e.target as HTMLElement;
+      if (target.id === 'share-btn') return;
       e.preventDefault();
       this.returnToTitle();
     });
@@ -566,7 +950,52 @@ export class Game {
       } else {
         statsEl.textContent = '';
       }
+      // Load leaderboard
+      this.loadLeaderboard();
     }
+  }
+
+  private async loadLeaderboard(): Promise<void> {
+    const container = this.titleScreen.querySelector('#title-leaderboard') as HTMLElement;
+    const table = this.titleScreen.querySelector('#leaderboard-table') as HTMLTableElement;
+    if (!container || !table) return;
+
+    // Only load leaderboard in Telegram or LINE
+    if (!telegram.isAvailable && !line.isAvailable) {
+      container.style.display = 'none';
+      return;
+    }
+
+    // Filter by platform - show only scores from the same platform
+    const platform = line.isInClient ? 'line' : (telegram.isAvailable ? 'telegram' : undefined);
+    const data = await getLeaderboard(10, platform);
+    if (!data || data.leaderboard.length === 0) {
+      container.style.display = 'none';
+      return;
+    }
+
+    // Build table rows - use string comparison for user ID
+    const currentUserId = telegram.userId?.toString() ?? line.userId ?? null;
+    table.innerHTML = data.leaderboard.map((entry) => {
+      const isCurrentUser = currentUserId === entry.odaUserId;
+      const rowStyle = isCurrentUser ? 'background: rgba(255, 221, 68, 0.2);' : '';
+      const nameStyle = isCurrentUser ? 'color: #ffdd44; font-weight: bold;' : 'color: #cccccc;';
+      return `
+        <tr style="${rowStyle}">
+          <td style="padding: 0.2rem 0.5rem; color: #ffaa66;">#${entry.rank}</td>
+          <td style="padding: 0.2rem 0.5rem; ${nameStyle}">${this.escapeHtml(entry.odaName)}</td>
+          <td style="padding: 0.2rem 0.5rem; color: #88cc88;">${entry.time.toFixed(1)}s</td>
+        </tr>
+      `;
+    }).join('');
+
+    container.style.display = 'block';
+  }
+
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   private setupInput(): void {
@@ -653,6 +1082,11 @@ export class Game {
     this.lastPeeledCellId = cell.id;
     updateCellVisual(cell);
 
+    // Make stem fall off when peeling TOP side (side 2)
+    if (side.id === 2 && !this.stemFalling) {
+      this.startStemFalling();
+    }
+
     // Spawn juice particles from the cell's center
     // Force world matrix update to get correct position
     cell.mesh.updateWorldMatrix(true, false);
@@ -682,6 +1116,8 @@ export class Game {
       side.peeled = true;
 
       // Check if game won
+      const peeledSides = this.state.sides.filter((s) => s.peeled).map((s) => s.id);
+      console.log(`Side ${side.id} complete. Peeled sides: [${peeledSides.join(', ')}] (${peeledSides.length}/6)`);
       if (this.state.sides.every((s) => s.peeled)) {
         this.win();
         return;
@@ -704,31 +1140,60 @@ export class Game {
     }
   }
 
-  // Find a valid edge to transition to, favoring unpeeled sides
+  // Find a valid edge to transition to, favoring viable paths
+  // Only considers edges that the LAST PEELED CELL touches - player must strategically end on correct edge
+  // IMPORTANT: When a cell touches multiple edges, we MUST choose a viable path if one exists
   private findValidTransitionEdge(cell: PeelCell, side: MandarinSide): EdgeType | null {
-    // Filter out 'center' from edges
+    // Filter out 'center' from edges - only edges the last cell touches
     const exitEdges = cell.edges.filter((e): e is Exclude<EdgeType, 'center'> => e !== 'center');
 
     if (exitEdges.length === 0) {
       return null;
     }
 
-    // If only one edge, use it (will be validated in transitionToNextSide)
-    if (exitEdges.length === 1) {
-      return exitEdges[0];
-    }
-
-    // Multiple edges (corner cell) - find one that leads to unpeeled side
+    // Collect all unpeeled adjacent sides this cell can reach
+    const unpeeledEdges: Exclude<EdgeType, 'center'>[] = [];
     for (const edge of exitEdges) {
       const adjacentSideId = side.adjacent[edge];
       if (!this.state.sides[adjacentSideId].peeled) {
-        console.log(`Corner cell: choosing ${edge} (leads to unpeeled ${i18n.getSideName(adjacentSideId)})`);
-        return edge;
+        unpeeledEdges.push(edge);
       }
     }
 
-    // All adjacent sides are peeled - return first edge (will trigger game over)
-    return exitEdges[0];
+    // No unpeeled adjacent sides from this cell
+    if (unpeeledEdges.length === 0) {
+      return null;
+    }
+
+    // If only one unpeeled edge, use it (no choice)
+    if (unpeeledEdges.length === 1) {
+      const edge = unpeeledEdges[0];
+      const adjacentSideId = side.adjacent[edge];
+      const isViable = this.isPathViable(side.id, adjacentSideId);
+      console.log(`Single exit edge ${edge} to side ${adjacentSideId}, viable: ${isViable}`);
+      return edge; // Return it regardless - if not viable, player loses eventually
+    }
+
+    // Multiple unpeeled edges - MUST choose one that allows completing the game
+    const viableEdges: Exclude<EdgeType, 'center'>[] = [];
+    for (const edge of unpeeledEdges) {
+      const adjacentSideId = side.adjacent[edge];
+      if (this.isPathViable(side.id, adjacentSideId)) {
+        viableEdges.push(edge);
+      }
+    }
+
+    // If we have viable edges, pick one (player survives)
+    if (viableEdges.length > 0) {
+      const chosen = viableEdges[0];
+      console.log(`Corner cell: choosing ${chosen} from ${viableEdges.length} viable paths (${unpeeledEdges.length} unpeeled edges)`);
+      return chosen;
+    }
+
+    // No viable paths exist from any of the cell's edges - pick first unpeeled
+    // This means player positioned themselves into an unwinnable state
+    console.log(`Corner cell: no viable paths from ${unpeeledEdges.length} unpeeled edges, game will be unwinnable`);
+    return unpeeledEdges[0];
   }
 
   private transitionToNextSide(edge: EdgeType): void {
@@ -857,10 +1322,21 @@ export class Game {
     this.peelStrip.setCamera(this.camera);
     this.peelStrip.setGravityFromCamera(this.camera);  // Set gravity based on initial camera
 
-    // Create new mandarin
-    const { sides, group, totalCells } = createMandarin(8);
+    // Create new mandarin with difficulty based on streak
+    const cellsPerSide = this.getCellsPerSide();
+    const { sides, group, totalCells } = createMandarin(cellsPerSide);
     this.mandarinGroup = group;
     this.scene.add(group);
+
+    // Get reference to stem for falling animation
+    this.stem = group.getObjectByName('stem') as THREE.Group | null;
+    this.stemFalling = false;
+    this.stemVelocity.set(0, 0, 0);
+    this.stemRotationVelocity.set(
+      (Math.random() - 0.5) * 5,
+      (Math.random() - 0.5) * 5,
+      (Math.random() - 0.5) * 5
+    );
 
     // Reset state
     this.state = {
@@ -887,17 +1363,33 @@ export class Game {
 
     this.showScreen('playing');
     this.updateEdgeIndicators();
+    this.updateStreakHUD();
+
+    // Update background emoji count based on streak
+    if (this.emojiBackground) {
+      this.emojiBackground.setLevel(this.streak);
+    }
   }
 
   private gameOver(reason: string): void {
     this.state.status = 'game_over';
     this.state.touchActive = false;
     this.hideEdgeIndicators();
+    this.updateStreakHUD(); // Hide HUD
 
     // Update stats
     this.totalTries++;
+    if (this.streak > this.bestStreak) {
+      this.bestStreak = this.streak;
+    }
+    const lostStreak = this.streak; // Save for display before reset
     this.streak = 0;
     this.saveStats();
+
+    // Reset background to level 0
+    if (this.emojiBackground) {
+      this.emojiBackground.setLevel(0);
+    }
 
     const elapsed = ((Date.now() - this.state.startTime) / 1000).toFixed(1);
     const reasonEl = this.gameOverScreen.querySelector('#game-over-reason') as HTMLElement;
@@ -906,27 +1398,85 @@ export class Game {
 
     reasonEl.textContent = reason;
     statsEl.textContent = i18n.formatPeeled(this.state.peeledCount, this.state.totalCells, elapsed);
-    streakEl.textContent = i18n.formatStats(this.totalWins, this.totalTries, 0);
+    if (lostStreak > 0) {
+      streakEl.textContent = `🔥 Lost streak of ${lostStreak}! Best: ${this.bestStreak}`;
+    } else {
+      streakEl.textContent = this.bestStreak > 0 ? `Best streak: ${this.bestStreak}` : '';
+    }
 
     this.showScreen('game_over');
   }
 
-  private win(): void {
+  private async win(): Promise<void> {
     this.state.status = 'win';
     this.state.touchActive = false;
     this.hideEdgeIndicators();
+    this.updateStreakHUD(); // Hide HUD
 
     // Update stats
     this.totalTries++;
     this.totalWins++;
     this.streak++;
+    if (this.streak > this.bestStreak) {
+      this.bestStreak = this.streak;
+    }
     this.saveStats();
 
-    const elapsed = ((Date.now() - this.state.startTime) / 1000).toFixed(1);
+    const elapsedNum = (Date.now() - this.state.startTime) / 1000;
+    const elapsed = elapsedNum.toFixed(1);
+    this.lastWinTime = elapsed;
+
     const statsEl = this.winScreen.querySelector('#win-stats') as HTMLElement;
     const streakEl = this.winScreen.querySelector('#win-streak') as HTMLElement;
+    const leaderboardEl = this.winScreen.querySelector('#win-leaderboard') as HTMLElement;
+    const shareBtn = this.winScreen.querySelector('#share-btn') as HTMLButtonElement;
+
     statsEl.textContent = i18n.formatTime(elapsed);
-    streakEl.textContent = i18n.formatStats(this.totalWins, this.totalTries, this.streak);
+    const nextCells = this.getCellsPerSide();
+    streakEl.textContent = `🔥 Streak: ${this.streak} | Next: ${nextCells} cells`;
+
+    // Show share button in Telegram or LINE
+    if (shareBtn) {
+      const canShare = telegram.isAvailable || (line.isAvailable && line.isInClient);
+      shareBtn.style.display = canShare ? 'block' : 'none';
+    }
+
+    // Submit score to global leaderboard (Telegram or LINE)
+    // Use string IDs for both platforms
+    const userId = telegram.userId?.toString() ?? line.userId ?? null;
+    const userName = telegram.isAvailable ? telegram.userName : line.userName;
+    const platform: 'telegram' | 'line' = line.isInClient ? 'line' : 'telegram';
+
+    console.log('[Score] Submitting:', { userId, userName, platform, time: elapsedNum });
+
+    if (userId && (telegram.isAvailable || line.isInClient)) {
+      const result = await submitScore(userId, userName, elapsedNum, platform);
+      console.log('[Score] Result:', result);
+      if (result && leaderboardEl) {
+        let leaderboardText = '';
+        if (result.bestTime !== null && result.bestTime === elapsedNum) {
+          leaderboardText += `${i18n.newRecord} `;
+        }
+        if (result.bestTime !== null) {
+          leaderboardText += i18n.formatBestTime(result.bestTime.toFixed(1));
+        }
+        if (result.rank !== null) {
+          leaderboardText += ` | ${i18n.formatRank(result.rank)}`;
+        }
+        leaderboardEl.textContent = leaderboardText;
+        leaderboardEl.style.display = 'block';
+      }
+    } else if (leaderboardEl) {
+      leaderboardEl.style.display = 'none';
+    }
+
+    // Start orbit animation for the peel strip
+    if (this.peelStrip) {
+      this.peelStrip.startOrbit();
+    }
+
+    // Spray juice towards the player's face!
+    this.spawnVictoryJuiceBurst();
 
     this.showScreen('win');
   }
@@ -936,10 +1486,64 @@ export class Game {
     this.showScreen('title');
   }
 
+  private async handleDonate(stars: number = 50): Promise<void> {
+    if (!telegram.isAvailable) return;
+
+    const donateBtn = this.titleScreen.querySelector('#donate-btn') as HTMLButtonElement;
+    if (donateBtn) {
+      donateBtn.disabled = true;
+      donateBtn.textContent = '...';
+    }
+
+    try {
+      const invoiceUrl = await createDonationInvoice(stars);
+      if (invoiceUrl) {
+        await telegram.openInvoice(invoiceUrl);
+      } else {
+        // Invoice creation failed - show error briefly
+        if (donateBtn) {
+          donateBtn.textContent = 'Error';
+          setTimeout(() => {
+            donateBtn.textContent = i18n.donateStars;
+          }, 2000);
+        }
+        return;
+      }
+    } finally {
+      if (donateBtn) {
+        donateBtn.disabled = false;
+        donateBtn.textContent = i18n.donateStars;
+      }
+    }
+  }
+
+  private async handleShare(): Promise<void> {
+    if (!this.lastWinTime) return;
+
+    const timeSeconds = parseFloat(this.lastWinTime);
+
+    // Try LINE first (if in LINE app)
+    if (line.isAvailable && line.isInClient) {
+      const result = await line.shareResult(timeSeconds);
+      if (result.status === 'success') {
+        this.returnToTitle();
+        return;
+      }
+    }
+
+    // Fall back to Telegram
+    if (telegram.isAvailable) {
+      const shareText = i18n.formatShareText(this.lastWinTime);
+      telegram.shareApp(shareText);
+      this.returnToTitle();
+    }
+  }
+
   private handleResize(): void {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.updateEdgeIndicatorPositions();
   }
 
   start(): void {
@@ -954,6 +1558,7 @@ export class Game {
 
       this.updateTilt();
       this.updateJuiceParticles(deltaTime);
+      this.updateStemFalling(deltaTime);
       this.peelStrip?.update(deltaTime);
       this.positionEdgeIndicatorsToCamera();
       this.renderer.render(this.scene, this.camera);

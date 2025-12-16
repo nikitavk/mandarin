@@ -1,6 +1,6 @@
 // Internationalization module with auto language detection
 
-export type Language = 'en' | 'ru';
+export type Language = 'en' | 'ru' | 'ko' | 'ja' | 'th';
 
 export interface Translations {
   // Title screen
@@ -42,10 +42,23 @@ export interface Translations {
 
   // Page title
   pageTitle: string;
+
+  // Leaderboard
+  leaderboard: string;
+  bestTime: string;
+  rank: string;
+  newRecord: string;
+
+  // Donate
+  donateStars: string;
+
+  // Share
+  share: string;
+  shareText: string;
 }
 
 const en: Translations = {
-  title: 'Mandarin',
+  title: 'MANDARIN',
   subtitle: 'Peel the mandarin in one touch',
   tapToStart: 'Tap to start',
 
@@ -76,11 +89,21 @@ const en: Translations = {
     right: 'Right',
   },
 
-  pageTitle: 'Mandarin Peeling Game',
+  pageTitle: 'MANDARIN',
+
+  leaderboard: 'Leaderboard',
+  bestTime: 'Best: {time}s',
+  rank: 'Rank: #{rank}',
+  newRecord: 'New Record!',
+
+  donateStars: 'Donate Stars ⭐',
+
+  share: 'Share',
+  shareText: '🍊✨ I PEELED IT FOR YOU in {time}s! Can you beat my time? 🎄🎁',
 };
 
 const ru: Translations = {
-  title: 'Мандарин',
+  title: 'МАНДАРИН',
   subtitle: 'Очисти мандарин одним касанием',
   tapToStart: 'Нажми, чтобы начать',
 
@@ -97,8 +120,8 @@ const ru: Translations = {
   time: 'Время: {time}с',
 
   liftedFinger: 'Ты оторвал палец!',
-  mustPeelConnected: 'Нужно чистить соседние дольки!',
-  endedOnCenter: 'Закончил на центральной дольке!',
+  mustPeelConnected: 'Нужно чистить соседние шкурки!',
+  endedOnCenter: 'Закончил на центральной шкурке!',
   noValidExit: 'Нет выхода - все соседние стороны очищены!',
   sideAlreadyPeeled: 'Сторона {side} уже очищена!',
 
@@ -111,17 +134,162 @@ const ru: Translations = {
     right: 'Правая',
   },
 
-  pageTitle: 'Игра: Чистим мандарин',
+  pageTitle: 'МАНДАРИН',
+
+  leaderboard: 'Таблица лидеров',
+  bestTime: 'Лучшее: {time}с',
+  rank: 'Место: #{rank}',
+  newRecord: 'Новый рекорд!',
+
+  donateStars: 'Задонатить звёзды ⭐',
+
+  share: 'Поделиться',
+  shareText: '🍊✨ Я ПОЧИСТИЛ ЕГО ДЛЯ ТЕБЯ за {time}с! Сможешь быстрее? 🎄🎁',
 };
 
-const translations: Record<Language, Translations> = { en, ru };
+const ko: Translations = {
+  title: '귤',
+  subtitle: '한 번의 터치로 귤 껍질 벗기기',
+  tapToStart: '탭하여 시작',
+
+  gameOver: '게임 오버',
+  tapToTryAgain: '탭하여 다시 시도',
+
+  youWin: '승리!',
+  tapToPlayAgain: '탭하여 다시 플레이',
+
+  wins: '승리',
+  streak: '연속',
+  statsFormat: '승리: {wins}/{total} | 연속: {streak}',
+  peeled: '{time}초 만에 {count}/{total} 조각 벗김',
+  time: '시간: {time}초',
+
+  liftedFinger: '손가락을 떼셨습니다!',
+  mustPeelConnected: '연결된 조각을 벗겨야 합니다!',
+  endedOnCenter: '중앙 조각에서 끝났습니다!',
+  noValidExit: '출구 없음 - 인접한 모든 면이 벗겨졌습니다!',
+  sideAlreadyPeeled: '{side} 면은 이미 벗겨졌습니다!',
+
+  sides: {
+    front: '앞면',
+    back: '뒷면',
+    top: '윗면',
+    bottom: '아랫면',
+    left: '왼쪽',
+    right: '오른쪽',
+  },
+
+  pageTitle: '귤',
+
+  leaderboard: '리더보드',
+  bestTime: '최고: {time}초',
+  rank: '순위: #{rank}',
+  newRecord: '신기록!',
+
+  donateStars: '별 기부 ⭐',
+
+  share: '공유',
+  shareText: '🍊✨ {time}초 만에 껍질을 벗겼어요! 내 기록을 이길 수 있나요? 🎄🎁',
+};
+
+const ja: Translations = {
+  title: 'みかん',
+  subtitle: 'ワンタッチでみかんの皮をむく',
+  tapToStart: 'タップしてスタート',
+
+  gameOver: 'ゲームオーバー',
+  tapToTryAgain: 'タップしてリトライ',
+
+  youWin: '勝利！',
+  tapToPlayAgain: 'タップしてもう一度',
+
+  wins: '勝利',
+  streak: '連続',
+  statsFormat: '勝利: {wins}/{total} | 連続: {streak}',
+  peeled: '{time}秒で{count}/{total}片をむいた',
+  time: '時間: {time}秒',
+
+  liftedFinger: '指を離しました！',
+  mustPeelConnected: '隣接する皮をむいてください！',
+  endedOnCenter: '中央で終了しました！',
+  noValidExit: '出口なし - 隣接する全ての面がむかれています！',
+  sideAlreadyPeeled: '{side}面はすでにむかれています！',
+
+  sides: {
+    front: '前面',
+    back: '背面',
+    top: '上面',
+    bottom: '下面',
+    left: '左面',
+    right: '右面',
+  },
+
+  pageTitle: 'みかん',
+
+  leaderboard: 'リーダーボード',
+  bestTime: '最高: {time}秒',
+  rank: 'ランク: #{rank}',
+  newRecord: '新記録！',
+
+  donateStars: 'スターを寄付 ⭐',
+
+  share: '共有',
+  shareText: '🍊✨ {time}秒でむきました！私の記録を超えられますか？ 🎄🎁',
+};
+
+const th: Translations = {
+  title: 'ส้ม',
+  subtitle: 'ปอกส้มด้วยนิ้วเดียวโดยไม่ยกนิ้ว',
+  tapToStart: 'แตะเพื่อเริ่ม',
+
+  gameOver: 'จบเกม',
+  tapToTryAgain: 'แตะเพื่อลองใหม่',
+
+  youWin: 'ชนะแล้ว!',
+  tapToPlayAgain: 'แตะเพื่อเล่นอีกครั้ง',
+
+  wins: 'ชนะ',
+  streak: 'ต่อเนื่อง',
+  statsFormat: 'ชนะ: {wins}/{total} | ต่อเนื่อง: {streak}',
+  peeled: 'ปอกได้ {count}/{total} ชิ้น ใน {time} วินาที',
+  time: 'เวลา: {time} วินาที',
+
+  liftedFinger: 'คุณยกนิ้วขึ้น!',
+  mustPeelConnected: 'ต้องปอกชิ้นที่ติดกัน!',
+  endedOnCenter: 'จบที่ชิ้นตรงกลาง!',
+  noValidExit: 'ไม่มีทางออก - ด้านที่อยู่ติดกันถูกปอกหมดแล้ว!',
+  sideAlreadyPeeled: 'ด้าน{side}ถูกปอกไปแล้ว!',
+
+  sides: {
+    front: 'หน้า',
+    back: 'หลัง',
+    top: 'บน',
+    bottom: 'ล่าง',
+    left: 'ซ้าย',
+    right: 'ขวา',
+  },
+
+  pageTitle: 'ส้ม',
+
+  leaderboard: 'กระดานผู้นำ',
+  bestTime: 'ดีที่สุด: {time} วินาที',
+  rank: 'อันดับ: #{rank}',
+  newRecord: 'สถิติใหม่!',
+
+  donateStars: 'บริจาคดาว ⭐',
+
+  share: 'แชร์',
+  shareText: '🍊✨ ฉันปอกส้มได้ใน {time} วินาที! คุณทำได้เร็วกว่านี้ไหม? 🎄🎁',
+};
+
+const translations: Record<Language, Translations> = { en, ru, ko, ja, th };
 
 // Detect language from browser/system settings
 function detectLanguage(): Language {
   // Check localStorage for user preference first
   try {
     const saved = localStorage.getItem('mandarin-language');
-    if (saved === 'en' || saved === 'ru') {
+    if (saved === 'en' || saved === 'ru' || saved === 'ko' || saved === 'ja' || saved === 'th') {
       return saved;
     }
   } catch {
@@ -132,8 +300,12 @@ function detectLanguage(): Language {
   const browserLang = navigator.language || (navigator as { userLanguage?: string }).userLanguage || 'en';
   const lang = browserLang.toLowerCase().split('-')[0];
 
-  // Return Russian for ru, otherwise default to English
-  return lang === 'ru' ? 'ru' : 'en';
+  // Return appropriate language or default to English
+  if (lang === 'ru') return 'ru';
+  if (lang === 'ko') return 'ko';
+  if (lang === 'ja') return 'ja';
+  if (lang === 'th') return 'th';
+  return 'en';
 }
 
 class I18n {
@@ -208,6 +380,25 @@ class I18n {
   getSideName(sideIndex: number): string {
     const sideKeys: (keyof Translations['sides'])[] = ['front', 'back', 'top', 'bottom', 'left', 'right'];
     return this.t.sides[sideKeys[sideIndex]] ?? `Side ${sideIndex}`;
+  }
+
+  get leaderboard(): string { return this.t.leaderboard; }
+  get newRecord(): string { return this.t.newRecord; }
+
+  formatBestTime(time: string): string {
+    return this.format(this.t.bestTime, { time });
+  }
+
+  formatRank(rank: number): string {
+    return this.format(this.t.rank, { rank });
+  }
+
+  get donateStars(): string { return this.t.donateStars; }
+
+  get share(): string { return this.t.share; }
+
+  formatShareText(time: string): string {
+    return this.format(this.t.shareText, { time });
   }
 }
 

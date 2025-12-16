@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { PeelCell } from './types';
 import { projectToRoundedCube } from './mandarin';
+import { getPeelTexture } from './textures';
 
 // ============================================================================
 // Peel Strip - Single Continuous Mesh with Physics
@@ -81,6 +82,12 @@ export class PeelStrip {
   // Fun physics
   private time: number = 0;
 
+  // Orbit animation state
+  private isOrbiting: boolean = false;
+  private orbitAngle: number = 0;
+  private orbitSpeed: number = 2.0; // radians per second
+  private orbitRadius: number = 2.5;
+
   constructor(scene: THREE.Scene) {
     this.scene = scene;
 
@@ -96,7 +103,8 @@ export class PeelStrip {
     this.geometry.setDrawRange(0, 0);
 
     const material = new THREE.MeshStandardMaterial({
-      color: 0xff8833,
+      color: 0xffffff,
+      map: getPeelTexture(),
       side: THREE.DoubleSide,
       roughness: 0.7,
       metalness: 0.0,
@@ -437,6 +445,13 @@ export class PeelStrip {
     const dt = Math.min(deltaTime, 0.033);
     this.time += dt;
 
+    // Handle orbit animation if active
+    if (this.isOrbiting) {
+      this.updateOrbit(dt);
+      this.syncGeometryFromPhysics();
+      return;
+    }
+
     // Move pinned vertices to cursor position
     if (this.hasCursorPosition) {
       for (const idx of this.pinnedIndices) {
@@ -559,5 +574,72 @@ export class PeelStrip {
 
   getSegmentCount(): number {
     return Math.floor(this.indexCount / 15);
+  }
+
+  // ============================================================================
+  // Orbit Animation (Victory Effect)
+  // ============================================================================
+
+  startOrbit(): void {
+    if (this.vertexCount === 0) return;
+
+    this.isOrbiting = true;
+    this.orbitAngle = 0;
+
+    // Unpin all vertices so the whole strip can move freely
+    for (const pv of this.physicsVertices) {
+      pv.pinned = false;
+    }
+    this.pinnedIndices.clear();
+
+    // Calculate center of mass for the strip
+    const centerOfMass = new THREE.Vector3();
+    for (const pv of this.physicsVertices) {
+      centerOfMass.add(pv.position);
+    }
+    centerOfMass.divideScalar(this.physicsVertices.length);
+
+    // Set orbit radius based on current distance from center
+    this.orbitRadius = Math.max(centerOfMass.length(), 2.0);
+
+    // Reduce gravity for floaty orbit effect
+    this.gravity.set(0, 0, 0);
+  }
+
+  private updateOrbit(deltaTime: number): void {
+    if (!this.isOrbiting || this.vertexCount === 0) return;
+
+    // Advance orbit angle
+    this.orbitAngle += this.orbitSpeed * deltaTime;
+
+    // Calculate orbit position (circular path around Y axis)
+    const orbitX = Math.sin(this.orbitAngle) * this.orbitRadius;
+    const orbitZ = Math.cos(this.orbitAngle) * this.orbitRadius;
+    const orbitY = Math.sin(this.orbitAngle * 0.5) * 0.5; // Slight vertical bobbing
+
+    // Calculate current center of mass
+    const currentCenter = new THREE.Vector3();
+    for (const pv of this.physicsVertices) {
+      currentCenter.add(pv.position);
+    }
+    currentCenter.divideScalar(this.physicsVertices.length);
+
+    // Target position for the center of mass
+    const targetCenter = new THREE.Vector3(orbitX, orbitY, orbitZ);
+
+    // Move all vertices towards the orbit path
+    const displacement = targetCenter.clone().sub(currentCenter);
+    const moveSpeed = 3.0 * deltaTime;
+
+    for (const pv of this.physicsVertices) {
+      // Smoothly move towards orbit path
+      pv.position.add(displacement.clone().multiplyScalar(moveSpeed));
+
+      // Add some rotation/tumbling effect
+      const tumbleX = Math.sin(this.orbitAngle * 2 + pv.position.x) * 0.02;
+      const tumbleY = Math.cos(this.orbitAngle * 1.5 + pv.position.z) * 0.02;
+      pv.position.x += tumbleY;
+      pv.position.y += tumbleX;
+    }
   }
 }

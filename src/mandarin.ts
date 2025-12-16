@@ -13,12 +13,46 @@ function createRoundedCubeCore(radius: number, _roundness: number): THREE.Mesh {
 
   // Solid orange color for the mandarin flesh
   const material = new THREE.MeshStandardMaterial({
-    color: 0xff9933,  // Bright orange
+    color: 0xff6600,  // Bright orange
     roughness: 0.7,
     metalness: 0.0,
   });
 
   return new THREE.Mesh(geometry, material);
+}
+
+// Create green stem button (where mandarin was attached to tree)
+function createStemButton(): THREE.Group {
+  const group = new THREE.Group();
+
+  // Green circular base
+  const baseGeometry = new THREE.CircleGeometry(0.15, 16);
+  const baseMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2d5a27,  // Dark green
+    roughness: 0.8,
+    metalness: 0.0,
+    side: THREE.DoubleSide,
+  });
+  const base = new THREE.Mesh(baseGeometry, baseMaterial);
+
+  // Small stem nub in center
+  const stemGeometry = new THREE.CylinderGeometry(0.03, 0.05, 0.08, 8);
+  const stemMaterial = new THREE.MeshStandardMaterial({
+    color: 0x3d6a37,  // Slightly lighter green
+    roughness: 0.9,
+    metalness: 0.0,
+  });
+  const stem = new THREE.Mesh(stemGeometry, stemMaterial);
+  stem.position.y = 0.04;
+
+  group.add(base);
+  group.add(stem);
+
+  // Position at top of mandarin
+  group.position.set(0, MANDARIN_RADIUS + 0.01, 0);
+  group.rotation.x = -Math.PI / 2;  // Face upward
+
+  return group;
 }
 
 // Project a point from a cube face onto a rounded cube surface
@@ -114,6 +148,11 @@ export function createMandarin(cellsPerSide: number = 6): {
   const core = createRoundedCubeCore(0.95, ROUNDNESS);
   core.name = 'core';
   group.add(core);
+
+  // Add green stem button at top
+  const stem = createStemButton();
+  stem.name = 'stem';
+  group.add(stem);
 
   return { sides, group, totalCells };
 }

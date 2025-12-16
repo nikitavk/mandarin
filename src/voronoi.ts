@@ -10,16 +10,60 @@ interface VoronoiSite {
   y: number;
 }
 
-// Generate random sites for Voronoi diagram with good distribution
+// Generate sites for Voronoi diagram optimized for playability
+// Ensures good edge coverage and connectivity
 function generateSites(count: number, bounds: number): VoronoiSite[] {
   const sites: VoronoiSite[] = [];
+
+  // For very low cell counts, use strategic placement
+  if (count <= 3) {
+    return generateStrategicSites(count, bounds);
+  }
+
+  // For higher counts, use a hybrid approach:
+  // 1. Place guaranteed edge sites first
+  // 2. Fill remaining with well-distributed random sites
+
   const margin = bounds * 0.15;
   const effectiveBounds = bounds - margin;
+  const minDist = (effectiveBounds * 2) / Math.sqrt(count) * 0.6;
 
-  // Use relaxed random placement with minimum distance
-  const minDist = (effectiveBounds * 2) / Math.sqrt(count) * 0.7;
+  // Place at least one site near each edge to guarantee edge cells
+  const edgeDistance = effectiveBounds * 0.75; // Far enough to create edge cells
+  const edgeSites: { x: number; y: number }[] = [];
 
-  for (let i = 0; i < count; i++) {
+  if (count >= 4) {
+    // One site toward each edge
+    edgeSites.push(
+      { x: 0, y: edgeDistance },    // top
+      { x: 0, y: -edgeDistance },   // bottom
+      { x: -edgeDistance, y: 0 },   // left
+      { x: edgeDistance, y: 0 }     // right
+    );
+  } else {
+    // For count < 4, place sites toward opposite edges
+    edgeSites.push(
+      { x: edgeDistance * 0.5, y: edgeDistance * 0.5 },
+      { x: -edgeDistance * 0.5, y: -edgeDistance * 0.5 }
+    );
+    if (count >= 3) {
+      edgeSites.push({ x: -edgeDistance * 0.5, y: edgeDistance * 0.5 });
+    }
+  }
+
+  // Add edge sites with jitter for variety
+  const jitter = effectiveBounds * 0.2;
+  for (let i = 0; i < Math.min(edgeSites.length, count); i++) {
+    const base = edgeSites[i];
+    sites.push({
+      id: i,
+      x: base.x + (Math.random() - 0.5) * jitter,
+      y: base.y + (Math.random() - 0.5) * jitter
+    });
+  }
+
+  // Fill remaining slots with random sites
+  for (let i = sites.length; i < count; i++) {
     let attempts = 0;
     let x: number, y: number;
 
@@ -45,6 +89,70 @@ function generateSites(count: number, bounds: number): VoronoiSite[] {
     } while (true);
 
     sites.push({ id: i, x, y });
+  }
+
+  return sites;
+}
+
+// Generate strategic sites for very low cell counts (1-3)
+// These need careful placement to ensure playability
+function generateStrategicSites(count: number, bounds: number): VoronoiSite[] {
+  const sites: VoronoiSite[] = [];
+  const edgeDist = bounds * 0.6;
+
+  if (count === 1) {
+    // Single cell - place off-center toward an edge so it becomes an edge cell
+    const edges = ['top', 'bottom', 'left', 'right'] as const;
+    const edge = edges[Math.floor(Math.random() * 4)];
+    const jitter = bounds * 0.15;
+
+    switch (edge) {
+      case 'top':
+        sites.push({ id: 0, x: (Math.random() - 0.5) * jitter, y: edgeDist });
+        break;
+      case 'bottom':
+        sites.push({ id: 0, x: (Math.random() - 0.5) * jitter, y: -edgeDist });
+        break;
+      case 'left':
+        sites.push({ id: 0, x: -edgeDist, y: (Math.random() - 0.5) * jitter });
+        break;
+      case 'right':
+        sites.push({ id: 0, x: edgeDist, y: (Math.random() - 0.5) * jitter });
+        break;
+    }
+  } else if (count === 2) {
+    // Two cells - place on opposite sides for guaranteed different edge exits
+    const horizontal = Math.random() > 0.5;
+    const jitter = bounds * 0.2;
+
+    if (horizontal) {
+      sites.push({ id: 0, x: -edgeDist, y: (Math.random() - 0.5) * jitter });
+      sites.push({ id: 1, x: edgeDist, y: (Math.random() - 0.5) * jitter });
+    } else {
+      sites.push({ id: 0, x: (Math.random() - 0.5) * jitter, y: -edgeDist });
+      sites.push({ id: 1, x: (Math.random() - 0.5) * jitter, y: edgeDist });
+    }
+  } else if (count === 3) {
+    // Three cells - triangle arrangement touching 3 different edges
+    const rotation = Math.floor(Math.random() * 4) * (Math.PI / 2);
+    const positions = [
+      { x: 0, y: edgeDist },           // top
+      { x: -edgeDist * 0.8, y: -edgeDist * 0.5 },  // bottom-left
+      { x: edgeDist * 0.8, y: -edgeDist * 0.5 }    // bottom-right
+    ];
+
+    // Apply rotation for variety
+    for (let i = 0; i < 3; i++) {
+      const cos = Math.cos(rotation);
+      const sin = Math.sin(rotation);
+      const pos = positions[i];
+      const jitter = bounds * 0.1;
+      sites.push({
+        id: i,
+        x: pos.x * cos - pos.y * sin + (Math.random() - 0.5) * jitter,
+        y: pos.x * sin + pos.y * cos + (Math.random() - 0.5) * jitter
+      });
+    }
   }
 
   return sites;
@@ -272,7 +380,7 @@ function computeCentroid(vertices: THREE.Vector2[]): THREE.Vector2 {
 }
 
 // Create mesh from polygon vertices (flat version - kept for compatibility)
-function createCellMesh(vertices: THREE.Vector2[], peeled: boolean): THREE.Mesh {
+function createCellMesh(vertices: THREE.Vector2[], _peeled: boolean): THREE.Mesh {
   const shape = new THREE.Shape();
 
   if (vertices.length < 3) {
@@ -290,7 +398,7 @@ function createCellMesh(vertices: THREE.Vector2[], peeled: boolean): THREE.Mesh 
 
   const geometry = new THREE.ShapeGeometry(shape);
   const material = new THREE.MeshBasicMaterial({
-    color: peeled ? 0xffcc88 : 0xff8833,
+    color: 0xff6600,
     side: THREE.DoubleSide,
   });
 
@@ -434,11 +542,85 @@ function createCurvedCellMesh(
   return new THREE.Mesh(geometry, material);
 }
 
+// Validate that a cell layout is playable
+// Requirements:
+// 1. At least one edge cell exists
+// 2. For multi-cell sides, there's a path from any cell to at least one edge cell
+function isLayoutPlayable(cells: { id: number; edge: EdgeType; edges: EdgeType[]; neighborIds: number[] }[]): boolean {
+  if (cells.length === 0) return false;
+  if (cells.length === 1) {
+    // Single cell must be an edge cell
+    return cells[0].edge !== 'center';
+  }
+
+  // Must have at least one edge cell
+  const edgeCells = cells.filter(c => c.edge !== 'center');
+  if (edgeCells.length === 0) return false;
+
+  // Check that every cell can reach at least one edge cell via neighbors
+  // BFS from each non-edge cell to verify connectivity
+  for (const cell of cells) {
+    if (cell.edge !== 'center') continue; // Edge cells are fine
+
+    // BFS to find path to any edge cell
+    const visited = new Set<number>();
+    const queue = [cell.id];
+    let foundEdge = false;
+
+    while (queue.length > 0 && !foundEdge) {
+      const current = queue.shift()!;
+      if (visited.has(current)) continue;
+      visited.add(current);
+
+      const currentCell = cells.find(c => c.id === current);
+      if (!currentCell) continue;
+
+      if (currentCell.edge !== 'center') {
+        foundEdge = true;
+        break;
+      }
+
+      for (const neighborId of currentCell.neighborIds) {
+        if (!visited.has(neighborId)) {
+          queue.push(neighborId);
+        }
+      }
+    }
+
+    if (!foundEdge) return false;
+  }
+
+  return true;
+}
+
 // Generate Voronoi cells for a mandarin side
+// Will retry up to maxAttempts times to get a playable layout
 export function generateVoronoiCells(
   sideId: number,
   cellCount: number = 6,
   bounds: number = 1
+): Omit<PeelCell, 'mesh'>[] {
+  const maxAttempts = 10;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const cells = generateVoronoiCellsOnce(sideId, cellCount, bounds);
+
+    if (isLayoutPlayable(cells)) {
+      return cells;
+    }
+  }
+
+  // Fallback: return last attempt and force fix it
+  const cells = generateVoronoiCellsOnce(sideId, cellCount, bounds);
+  forceFixLayout(cells);
+  return cells;
+}
+
+// Single attempt at generating Voronoi cells
+function generateVoronoiCellsOnce(
+  sideId: number,
+  cellCount: number,
+  bounds: number
 ): Omit<PeelCell, 'mesh'>[] {
   const sites = generateSites(cellCount, bounds);
   const tempCells: { id: number; vertices: THREE.Vector2[]; center: THREE.Vector2; edge: EdgeType; edges: EdgeType[] }[] = [];
@@ -476,11 +658,17 @@ export function generateVoronoiCells(
     neighborIds: neighborMap.get(cell.id) || [],
   }));
 
-  // Ensure we have at least one non-center cell
-  // If all are center, make one an edge cell
+  return cells;
+}
+
+// Force fix a layout that doesn't have proper edge cells
+function forceFixLayout(cells: Omit<PeelCell, 'mesh'>[]): void {
+  if (cells.length === 0) return;
+
+  // Ensure at least one non-center cell exists
   const hasEdge = cells.some(c => c.edge !== 'center');
-  if (!hasEdge && cells.length > 0) {
-    // Find the cell closest to any edge
+  if (!hasEdge) {
+    // Find the cell closest to any edge and make it an edge cell
     let maxDist = 0;
     let edgeCell = cells[0];
     for (const cell of cells) {
@@ -501,8 +689,6 @@ export function generateVoronoiCells(
     }
     edgeCell.edges = [edgeCell.edge];
   }
-
-  return cells;
 }
 
 // Create Three.js meshes for cells
@@ -517,7 +703,7 @@ export function createCellMeshes(cells: Omit<PeelCell, 'mesh'>[]): PeelCell[] {
 export function updateCellVisual(cell: PeelCell): void {
   const material = cell.mesh.material as THREE.MeshStandardMaterial;
   if (cell.peeled) {
-    // Show inner body texture (darker orange flesh)
+    // Show inner body texture (lighter orange flesh)
     material.map = getBodyTexture();
     material.color.setHex(0xffffff);
     material.needsUpdate = true;

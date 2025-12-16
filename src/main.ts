@@ -1,5 +1,9 @@
 import { Game } from './game';
+import { lineInitPromise } from './line';
 
-// Start the game
-const game = new Game();
-game.start();
+// Wait for LINE SDK to initialize before starting game
+// This ensures line.isInClient is accurate when UI is created
+lineInitPromise.then(() => {
+  const game = new Game();
+  game.start();
+});
