@@ -1,10 +1,9 @@
 import { Game } from './game';
-import { lineInitPromise } from './line';
+import { yandex } from './yandex';
 import { ChristmasEmojiBackground } from './christmasEmoji';
 
-// Wait for LINE SDK to initialize before starting game
-// This ensures line.isInClient is accurate when UI is created
-lineInitPromise.then(() => {
+// Initialize Yandex SDK before starting game
+yandex.init().then(() => {
   // Create background with floating Christmas emojis (reduced for mobile perf)
   new ChristmasEmojiBackground(10);
 

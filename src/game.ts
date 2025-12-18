@@ -14,8 +14,7 @@ import { InputManager, InputState } from './input';
 import { PeelStrip } from './peelStrip';
 import { GameRecorder } from './recorder';
 import { i18n } from './i18n';
-import { telegram, submitScore, getLeaderboard, createDonationInvoice, getAnonymousUserId, getAnonymousUserName } from './telegram';
-import { line } from './line';
+import { yandex, submitScore, getLeaderboard, getAnonymousUserId, getAnonymousUserName } from './yandex';
 
 // Game settings (code-level configuration)
 const GAME_SETTINGS = {
@@ -83,7 +82,6 @@ export class Game {
   // Stats tracking
   private totalTries: number = 0;
   private totalWins: number = 0;
-  private lastWinTime: string = '';
 
   // Fixed cells per side
   private readonly CELLS_PER_SIDE = 7;
@@ -855,53 +853,22 @@ export class Game {
       this.startGame();
     });
 
-    // Handle donate button (only show in Telegram)
-    const donateBtn = screen.querySelector('#donate-btn') as HTMLButtonElement;
-    const donateAmount = screen.querySelector('#donate-amount') as HTMLSelectElement;
+    // Hide donate button (not available on Yandex)
     const donateContainer = screen.querySelector('#donate-container') as HTMLElement;
-    if (donateContainer && !telegram.isAvailable) {
+    if (donateContainer) {
       donateContainer.style.display = 'none';
     }
-    if (donateBtn && donateAmount) {
-      donateBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const stars = parseInt(donateAmount.value, 10);
-        this.handleDonate(stars);
-      });
-      donateBtn.addEventListener('touchstart', (e) => {
-        e.stopPropagation();
-      });
-      donateAmount.addEventListener('click', (e) => {
-        e.stopPropagation();
-      });
-      donateAmount.addEventListener('touchstart', (e) => {
-        e.stopPropagation();
-      });
-    }
 
-    // Update author link based on platform (LINE vs Telegram)
+    // Update author link for Yandex
     const authorLink = screen.querySelector('#author-link') as HTMLAnchorElement;
     if (authorLink) {
-      if (line.isInClient) {
-        // LINE app - link to LINE profile
-        authorLink.href = 'https://line.me/ti/p/~nikitose';
-        authorLink.textContent = 'by @nikitose';
-      } else if (telegram.isAvailable) {
-        // Telegram - keep Telegram link
-        authorLink.href = 'https://t.me/nikita_kv';
-        authorLink.textContent = 'by @nikita_kv';
-      } else {
-        // Web browser - show both
-        authorLink.href = 'https://t.me/nikita_kv';
-        authorLink.textContent = 'by @nikita_kv';
-      }
+      authorLink.href = 'https://t.me/nikita_kv';
+      authorLink.textContent = 'by @nikita_kv';
     }
 
     // Debug: log platform detection
     console.log('[Platform]', {
-      lineInClient: line.isInClient,
-      lineAvailable: line.isAvailable,
-      telegramAvailable: telegram.isAvailable,
+      yandexAvailable: yandex.isAvailable,
     });
 
     this.uiContainer.appendChild(screen);
@@ -1062,11 +1029,8 @@ export class Game {
     // Hide tabs - no tabs needed
     tabsContainer.style.display = 'none';
 
-    // Determine which platform's leaderboard to show:
-    // - Telegram users see Telegram leaderboard
-    // - LINE users see LINE leaderboard
-    // - Web users see Telegram leaderboard
-    const platformToShow: 'telegram' | 'line' = line.isInClient ? 'line' : 'telegram';
+    // Show Yandex leaderboard
+    const platformToShow: 'telegram' | 'line' | 'web' | 'yandex' = 'yandex';
 
     // Fetch leaderboard for this platform
     const data = await getLeaderboard(10, platformToShow, { cellCount: this.CELLS_PER_SIDE });
@@ -1077,8 +1041,8 @@ export class Game {
       return;
     }
 
-    // Build table rows - use string comparison for user ID (Telegram, LINE, or Web)
-    const currentUserId = telegram.userId?.toString() ?? line.userId ?? getAnonymousUserId();
+    // Build table rows - use string comparison for user ID
+    const currentUserId = yandex.userId ?? getAnonymousUserId();
 
     // Time leaderboard: show rank, name, time
     table.innerHTML = data.leaderboard.map((entry) => {
@@ -1474,7 +1438,6 @@ export class Game {
     // Calculate elapsed time
     const elapsedNum = (Date.now() - this.state.startTime) / 1000;
     const elapsed = elapsedNum.toFixed(1);
-    this.lastWinTime = elapsed;
 
     // Update stats
     this.totalTries++;
@@ -1489,10 +1452,9 @@ export class Game {
     statsEl.textContent = i18n.formatTime(elapsed);
     streakEl.textContent = i18n.formatTotalPeeled(this.totalWins);
 
-    // Show share button in Telegram or LINE
+    // Hide share button on Yandex (no native share API)
     if (shareBtn) {
-      const canShare = telegram.isAvailable || (line.isAvailable && line.isInClient);
-      shareBtn.style.display = canShare ? 'block' : 'none';
+      shareBtn.style.display = 'none';
     }
 
     // Show download clip button with loading state while recording finalizes
@@ -1511,11 +1473,10 @@ export class Game {
       downloadClipBtn.style.display = this.lastRecordedBlob ? 'block' : 'none';
     }
 
-    // Submit score to global leaderboard (Telegram, LINE, or Web)
-    // Use string IDs for all platforms
-    const userId = telegram.userId?.toString() ?? line.userId ?? getAnonymousUserId();
-    const userName = telegram.isAvailable ? telegram.userName : (line.isInClient ? line.userName : getAnonymousUserName());
-    const platform: 'telegram' | 'line' | 'web' = line.isInClient ? 'line' : (telegram.isAvailable ? 'telegram' : 'web');
+    // Submit score to global leaderboard (Yandex)
+    const userId = yandex.userId ?? getAnonymousUserId();
+    const userName = yandex.isAvailable ? yandex.userName : getAnonymousUserName();
+    const platform: 'telegram' | 'line' | 'web' | 'yandex' = 'yandex';
 
     console.log('[Score] Submitting:', {
       userId, userName, platform, time: elapsedNum, cellCount: this.CELLS_PER_SIDE
@@ -1555,64 +1516,19 @@ export class Game {
     this.showScreen('win');
   }
 
-  private returnToTitle(): void {
+  private async returnToTitle(): Promise<void> {
     this.state.status = 'title';
     this.stopShowcaseRotation();
+
+    // Show interstitial ad between sessions
+    await yandex.showInterstitialAd();
+
     this.showScreen('title');
   }
 
-  private async handleDonate(stars: number = 50): Promise<void> {
-    if (!telegram.isAvailable) return;
-
-    const donateBtn = this.titleScreen.querySelector('#donate-btn') as HTMLButtonElement;
-    if (donateBtn) {
-      donateBtn.disabled = true;
-      donateBtn.textContent = '...';
-    }
-
-    try {
-      const invoiceUrl = await createDonationInvoice(stars);
-      if (invoiceUrl) {
-        await telegram.openInvoice(invoiceUrl);
-      } else {
-        // Invoice creation failed - show error briefly
-        if (donateBtn) {
-          donateBtn.textContent = 'Error';
-          setTimeout(() => {
-            donateBtn.textContent = i18n.donateStars;
-          }, 2000);
-        }
-        return;
-      }
-    } finally {
-      if (donateBtn) {
-        donateBtn.disabled = false;
-        donateBtn.textContent = i18n.donateStars;
-      }
-    }
-  }
-
   private async handleShare(): Promise<void> {
-    if (!this.lastWinTime) return;
-
-    const timeSeconds = parseFloat(this.lastWinTime);
-    const cellsPerSide = this.CELLS_PER_SIDE;
-
-    // Try LINE first (if in LINE app)
-    if (line.isAvailable && line.isInClient) {
-      const result = await line.shareResult(timeSeconds, cellsPerSide);
-      if (result.status === 'success') {
-        this.returnToTitle();
-        return;
-      }
-    }
-
-    // Use simple share method (inline query requires bot support)
-    if (telegram.isAvailable) {
-      const shareText = i18n.formatShareText(this.lastWinTime);
-      telegram.shareApp(shareText);
-      this.returnToTitle();
-    }
+    // Share not available on Yandex - button is hidden
+    this.returnToTitle();
   }
 
   // ============================================================================
