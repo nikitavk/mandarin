@@ -230,10 +230,86 @@ class TelegramManager {
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(appUrl)}&text=${encodeURIComponent(text)}`;
     this.webApp.openTelegramLink(shareUrl);
   }
+
+  // Share a link via Telegram (with custom URL for OG preview)
+  shareLink(url: string, text: string): void {
+    if (!this.webApp) return;
+
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}`;
+    this.webApp.openTelegramLink(shareUrl);
+  }
+
+  // Share via inline query (shows image with button)
+  // cellsPerSide should be 1,3,5,7... to match win_pics filenames
+  // timeSeconds is the time taken to complete the level
+  shareInline(cellsPerSide: number, timeSeconds: number): boolean {
+    console.log('[TG] shareInline called, cellsPerSide:', cellsPerSide, 'time:', timeSeconds);
+    console.log('[TG] webApp:', !!this.webApp);
+    console.log('[TG] switchInlineQuery:', !!this.webApp?.switchInlineQuery);
+
+    if (!this.webApp?.switchInlineQuery) {
+      console.log('[TG] switchInlineQuery not available, falling back');
+      return false;
+    }
+
+    try {
+      // Format: "cellsPerSide:timeSeconds" e.g. "5:12.3"
+      const query = `${cellsPerSide}:${timeSeconds.toFixed(1)}`;
+      this.webApp.switchInlineQuery(query, ['users', 'groups', 'channels']);
+      console.log('[TG] switchInlineQuery called successfully');
+      return true;
+    } catch (e) {
+      console.error('[TG] switchInlineQuery error:', e);
+      return false;
+    }
+  }
 }
 
 // Singleton
 export const telegram = new TelegramManager();
+
+// ============ Anonymous Web User Support ============
+
+// Generate a unique anonymous user ID for web users (not in Telegram/LINE)
+function generateAnonymousId(): string {
+  // Generate a UUID-like ID
+  const array = new Uint8Array(16);
+  crypto.getRandomValues(array);
+  return 'web_' + Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Get or create anonymous user ID from localStorage
+export function getAnonymousUserId(): string | null {
+  try {
+    let id = localStorage.getItem('mandarin-anonymous-id');
+    if (!id) {
+      id = generateAnonymousId();
+      localStorage.setItem('mandarin-anonymous-id', id);
+    }
+    return id;
+  } catch {
+    // localStorage not available
+    return null;
+  }
+}
+
+// Get anonymous user name from localStorage
+export function getAnonymousUserName(): string {
+  try {
+    return localStorage.getItem('mandarin-anonymous-name') || 'Player';
+  } catch {
+    return 'Player';
+  }
+}
+
+// Set anonymous user name
+export function setAnonymousUserName(name: string): void {
+  try {
+    localStorage.setItem('mandarin-anonymous-name', name);
+  } catch {
+    // Ignore localStorage errors
+  }
+}
 
 // ============ Global Leaderboard API ============
 
@@ -243,27 +319,49 @@ export interface ScoreResponse {
   bestTime: number | null;
 }
 
-export interface LeaderboardResponse {
-  leaderboard: Array<{
-    rank: number;
-    odaUserId: string;  // String to support both Telegram and LINE
-    odaName: string;
-    time: number;
-    platform?: 'telegram' | 'line';
-  }>;
+export interface APILeaderboardEntry {
+  rank: number;
+  odaUserId: string;
+  odaName: string;
+  time: number;
+  streak: number;
+  streakTime: number;
+  cellCount: number;
+  platform: 'telegram' | 'line' | 'web';
 }
 
+export interface LeaderboardResponse {
+  leaderboard: APILeaderboardEntry[];
+}
+
+export type LeaderboardSortBy = 'time' | 'streak' | 'streakTime';
+
 export async function submitScore(
-  odaUserId: string,  // String to support both Telegram and LINE
+  odaUserId: string,
   odaName: string,
   time: number,
-  platform: 'telegram' | 'line' = 'telegram'
+  platform: 'telegram' | 'line' | 'web' = 'telegram',
+  options?: {
+    streak?: number;
+    streakTime?: number;
+    streakId?: string;
+    cellCount?: number;
+  }
 ): Promise<ScoreResponse | null> {
   try {
     const response = await fetch(`${API_URL}/score`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ odaUserId, odaName, time, platform }),
+      body: JSON.stringify({
+        odaUserId,
+        odaName,
+        time,
+        platform,
+        streak: options?.streak || 0,
+        streakTime: options?.streakTime || 0,
+        streakId: options?.streakId || null,
+        cellCount: options?.cellCount || 1,
+      }),
     });
     if (!response.ok) return null;
     return await response.json();
@@ -272,13 +370,27 @@ export async function submitScore(
   }
 }
 
-export async function getLeaderboard(limit = 10, platform?: 'telegram' | 'line'): Promise<LeaderboardResponse | null> {
+export async function getLeaderboard(
+  limit = 10,
+  platform?: 'telegram' | 'line' | 'web',
+  options?: {
+    cellCount?: number;
+    sortBy?: LeaderboardSortBy;
+  }
+): Promise<LeaderboardResponse | null> {
   try {
-    let url = `${API_URL}/leaderboard?limit=${limit}`;
+    const params = new URLSearchParams();
+    params.set('limit', String(limit));
     if (platform) {
-      url += `&platform=${platform}`;
+      params.set('platform', platform);
     }
-    const response = await fetch(url);
+    if (options?.cellCount) {
+      params.set('cellCount', String(options.cellCount));
+    }
+    if (options?.sortBy) {
+      params.set('sortBy', options.sortBy);
+    }
+    const response = await fetch(`${API_URL}/leaderboard?${params.toString()}`);
     if (!response.ok) return null;
     return await response.json();
   } catch {
@@ -287,10 +399,15 @@ export async function getLeaderboard(limit = 10, platform?: 'telegram' | 'line')
 }
 
 export async function getUserRankFromAPI(
-  odaUserId: string  // String to support both Telegram and LINE
-): Promise<{ rank: number; bestTime: number; total: number } | null> {
+  odaUserId: string,
+  cellCount?: number
+): Promise<{ rank: number; bestTime: number; total: number; streak: number; streakTime: number } | null> {
   try {
-    const response = await fetch(`${API_URL}/rank/${encodeURIComponent(odaUserId)}`);
+    let url = `${API_URL}/rank/${encodeURIComponent(odaUserId)}`;
+    if (cellCount) {
+      url += `?cellCount=${cellCount}`;
+    }
+    const response = await fetch(url);
     if (!response.ok) return null;
     return await response.json();
   } catch {

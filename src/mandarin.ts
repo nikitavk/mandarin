@@ -126,7 +126,7 @@ function createSide(sideId: number, cellCount: number = 6): MandarinSide {
 }
 
 // Create full mandarin with all 6 sides
-export function createMandarin(cellsPerSide: number = 6): {
+export function createMandarin(cellsPerSide: number = 7): {
   sides: MandarinSide[];
   group: THREE.Group;
   totalCells: number;

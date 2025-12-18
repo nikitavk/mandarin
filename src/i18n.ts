@@ -55,6 +55,12 @@ export interface Translations {
   // Share
   share: string;
   shareText: string;
+
+  // Total stats
+  totalPeeled: string; // "Total mandarins peeled: {count}"
+
+  // Cells count
+  cellsCount: string; // "{count} cells"
 }
 
 const en: Translations = {
@@ -98,8 +104,12 @@ const en: Translations = {
 
   donateStars: 'Donate Stars ⭐',
 
-  share: 'Share',
+  share: 'Send 🍊 to a friend',
   shareText: '🍊✨ I PEELED IT FOR YOU in {time}s! Can you beat my time? 🎄🎁',
+
+  totalPeeled: 'Total mandarins peeled: {count}',
+
+  cellsCount: '{count} cells',
 };
 
 const ru: Translations = {
@@ -143,8 +153,12 @@ const ru: Translations = {
 
   donateStars: 'Задонатить звёзды ⭐',
 
-  share: 'Поделиться',
+  share: 'Отправить 🍊 другу',
   shareText: '🍊✨ Я ПОЧИСТИЛ ЕГО ДЛЯ ТЕБЯ за {time}с! Сможешь быстрее? 🎄🎁',
+
+  totalPeeled: 'Всего мандаринов очищено: {count}',
+
+  cellsCount: '{count} долек',
 };
 
 const ko: Translations = {
@@ -188,8 +202,12 @@ const ko: Translations = {
 
   donateStars: '별 기부 ⭐',
 
-  share: '공유',
+  share: '친구에게 🍊 보내기',
   shareText: '🍊✨ {time}초 만에 껍질을 벗겼어요! 내 기록을 이길 수 있나요? 🎄🎁',
+
+  totalPeeled: '총 껍질 벗긴 귤: {count}개',
+
+  cellsCount: '{count}조각',
 };
 
 const ja: Translations = {
@@ -233,8 +251,12 @@ const ja: Translations = {
 
   donateStars: 'スターを寄付 ⭐',
 
-  share: '共有',
+  share: '友達に🍊を送る',
   shareText: '🍊✨ {time}秒でむきました！私の記録を超えられますか？ 🎄🎁',
+
+  totalPeeled: 'むいたみかんの合計: {count}個',
+
+  cellsCount: '{count}片',
 };
 
 const th: Translations = {
@@ -278,8 +300,12 @@ const th: Translations = {
 
   donateStars: 'บริจาคดาว ⭐',
 
-  share: 'แชร์',
+  share: 'ส่ง 🍊 ให้เพื่อน',
   shareText: '🍊✨ ฉันปอกส้มได้ใน {time} วินาที! คุณทำได้เร็วกว่านี้ไหม? 🎄🎁',
+
+  totalPeeled: 'ปอกส้มไปแล้วทั้งหมด: {count} ลูก',
+
+  cellsCount: '{count} ชิ้น',
 };
 
 const translations: Record<Language, Translations> = { en, ru, ko, ja, th };
@@ -399,6 +425,14 @@ class I18n {
 
   formatShareText(time: string): string {
     return this.format(this.t.shareText, { time });
+  }
+
+  formatTotalPeeled(count: number): string {
+    return this.format(this.t.totalPeeled, { count });
+  }
+
+  formatCellsCount(count: number): string {
+    return this.format(this.t.cellsCount, { count });
   }
 }
 

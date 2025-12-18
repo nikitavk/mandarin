@@ -2,22 +2,60 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Mandarin Peeling Game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>MANDARIN</title>
+
+    <!-- Open Graph / Telegram link preview -->
+    <meta property="og:title" content="🍊 MANDARIN - Peel it in one touch!" />
+    <meta property="og:description" content="Can you peel a mandarin without lifting your finger? A Christmas mini-game challenge!" />
+    <meta property="og:image" content="https://mandarin-game.pages.dev/preview.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:url" content="https://t.me/MANDARINMANDARINbot/MANDARIN" />
+    <meta property="og:type" content="website" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="🍊 MANDARIN - Peel it in one touch!" />
+    <meta name="twitter:description" content="Can you peel a mandarin without lifting your finger? A Christmas mini-game challenge!" />
+    <meta name="twitter:image" content="https://mandarin-game.pages.dev/preview.png" />
+
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
       * {
         margin: 0;
         padding: 0;
         box-sizing: border-box;
       }
-      body {
+      html, body {
         overflow: hidden;
+        position: fixed;
+        width: 100%;
+        height: 100%;
+        touch-action: none;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        user-select: none;
+        overscroll-behavior: none;
       }
       canvas {
         display: block;
+        touch-action: none;
+      }
+      @supports (padding: env(safe-area-inset-top)) {
+        body {
+          padding-top: env(safe-area-inset-top);
+          padding-bottom: env(safe-area-inset-bottom);
+          padding-left: env(safe-area-inset-left);
+          padding-right: env(safe-area-inset-right);
+        }
       }
     </style>
-    <script type="module" crossorigin src="/assets/index-BbGI-WZs.js"></script>
+    <script type="module" crossorigin src="/mandarin/assets/index-DdXrFcwM.js"></script>
+    <link rel="modulepreload" crossorigin href="/mandarin/assets/three-BjcdYgkX.js">
   </head>
   <body>
   </body>

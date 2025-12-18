@@ -63,6 +63,9 @@ function generateSites(count: number, bounds: number): VoronoiSite[] {
   }
 
   // Fill remaining slots with random sites
+  // Pre-compute squared distance threshold to avoid sqrt in hot loop
+  const minDistSq = minDist * minDist;
+
   for (let i = sites.length; i < count; i++) {
     let attempts = 0;
     let x: number, y: number;
@@ -72,12 +75,12 @@ function generateSites(count: number, bounds: number): VoronoiSite[] {
       y = (Math.random() * 2 - 1) * effectiveBounds;
       attempts++;
 
-      // Check distance from existing sites
+      // Check distance from existing sites using squared distance
       let valid = true;
       for (const site of sites) {
         const dx = x - site.x;
         const dy = y - site.y;
-        if (Math.sqrt(dx * dx + dy * dy) < minDist) {
+        if (dx * dx + dy * dy < minDistSq) {
           valid = false;
           break;
         }
@@ -133,20 +136,26 @@ function generateStrategicSites(count: number, bounds: number): VoronoiSite[] {
       sites.push({ id: 1, x: (Math.random() - 0.5) * jitter, y: edgeDist });
     }
   } else if (count === 3) {
-    // Three cells - triangle arrangement touching 3 different edges
-    const rotation = Math.floor(Math.random() * 4) * (Math.PI / 2);
+    // Three cells - more chaotic placement for difficulty
+    // Random rotation + high jitter = unpredictable shapes
+    const rotation = Math.random() * Math.PI * 2; // Full random rotation
+    const jitter = bounds * 0.35; // Much higher jitter for chaos
+
+    // Randomize the triangle shape itself
+    const stretch = 0.6 + Math.random() * 0.5; // 0.6-1.1 stretch factor
+    const skew = (Math.random() - 0.5) * 0.4; // Asymmetry
+
     const positions = [
-      { x: 0, y: edgeDist },           // top
-      { x: -edgeDist * 0.8, y: -edgeDist * 0.5 },  // bottom-left
-      { x: edgeDist * 0.8, y: -edgeDist * 0.5 }    // bottom-right
+      { x: skew * edgeDist, y: edgeDist * stretch },
+      { x: -edgeDist * (0.6 + Math.random() * 0.4), y: -edgeDist * (0.3 + Math.random() * 0.4) },
+      { x: edgeDist * (0.6 + Math.random() * 0.4), y: -edgeDist * (0.3 + Math.random() * 0.4) }
     ];
 
-    // Apply rotation for variety
+    // Apply rotation and jitter
     for (let i = 0; i < 3; i++) {
       const cos = Math.cos(rotation);
       const sin = Math.sin(rotation);
       const pos = positions[i];
-      const jitter = bounds * 0.1;
       sites.push({
         id: i,
         x: pos.x * cos - pos.y * sin + (Math.random() - 0.5) * jitter,
@@ -233,8 +242,9 @@ function clipPolygonToHalfPlane(
 }
 
 // Classify which edge(s) a cell touches based on its vertices
+// Uses the same edge contact threshold as classifyEdges for consistency
 function classifyEdge(vertices: THREE.Vector2[], center: THREE.Vector2, bounds: number): EdgeType {
-  const threshold = bounds * 0.85;
+  const threshold = bounds * 0.75;
 
   // Check if center is near an edge
   if (center.y > threshold) return 'top';
@@ -242,32 +252,75 @@ function classifyEdge(vertices: THREE.Vector2[], center: THREE.Vector2, bounds: 
   if (center.x > threshold) return 'right';
   if (center.x < -threshold) return 'left';
 
-  // Check if any vertex touches an edge
-  for (const v of vertices) {
-    if (Math.abs(v.x - bounds) < 0.01 || Math.abs(v.x + bounds) < 0.01 ||
-        Math.abs(v.y - bounds) < 0.01 || Math.abs(v.y + bounds) < 0.01) {
-      // Vertex on boundary, classify by center position
+  // Use classifyEdges to get all edges with proper threshold,
+  // then return the primary one based on center position
+  const edges = classifyEdges(vertices, bounds);
+
+  // If we have edge contact, return the one closest to center direction
+  if (edges.length > 0 && edges[0] !== 'center') {
+    // If multiple edges, pick based on center position
+    if (edges.length > 1) {
       if (Math.abs(center.x) > Math.abs(center.y)) {
-        return center.x > 0 ? 'right' : 'left';
+        if (edges.includes('right') && center.x > 0) return 'right';
+        if (edges.includes('left') && center.x < 0) return 'left';
       } else {
-        return center.y > 0 ? 'top' : 'bottom';
+        if (edges.includes('top') && center.y > 0) return 'top';
+        if (edges.includes('bottom') && center.y < 0) return 'bottom';
       }
     }
+    return edges[0];
   }
 
   return 'center';
 }
 
 // Get all edges a cell touches (for corner cells that touch multiple edges)
-function classifyEdges(vertices: THREE.Vector2[], bounds: number): EdgeType[] {
+// A cell touches an edge if ANY vertex is on the boundary OR any edge segment crosses the boundary
+// Exported for runtime recomputation
+export function classifyEdges(vertices: THREE.Vector2[], bounds: number = 1): EdgeType[] {
   const edges: Set<EdgeType> = new Set();
-  const threshold = bounds * 0.98;
+  const threshold = bounds * 0.75; // Within 25% of boundary counts as touching (lenient for curved projection)
+  const n = vertices.length;
 
+  // Check vertices
   for (const v of vertices) {
     if (v.y >= threshold) edges.add('top');
     if (v.y <= -threshold) edges.add('bottom');
     if (v.x >= threshold) edges.add('right');
     if (v.x <= -threshold) edges.add('left');
+  }
+
+  // Also check if any edge segment lies along OR crosses a boundary
+  for (let i = 0; i < n; i++) {
+    const curr = vertices[i];
+    const next = vertices[(i + 1) % n];
+
+    // Check if segment lies along top boundary (both y values very close to bounds)
+    if (Math.abs(curr.y - bounds) < 0.01 && Math.abs(next.y - bounds) < 0.01) edges.add('top');
+    // Check if segment lies along bottom boundary
+    if (Math.abs(curr.y + bounds) < 0.01 && Math.abs(next.y + bounds) < 0.01) edges.add('bottom');
+    // Check if segment lies along right boundary
+    if (Math.abs(curr.x - bounds) < 0.01 && Math.abs(next.x - bounds) < 0.01) edges.add('right');
+    // Check if segment lies along left boundary
+    if (Math.abs(curr.x + bounds) < 0.01 && Math.abs(next.x + bounds) < 0.01) edges.add('left');
+
+    // Check if segment crosses a boundary (one vertex past threshold, interpolate to boundary)
+    // Right boundary: segment crosses x = threshold
+    if ((curr.x < threshold && next.x >= threshold) || (next.x < threshold && curr.x >= threshold)) {
+      edges.add('right');
+    }
+    // Left boundary: segment crosses x = -threshold
+    if ((curr.x > -threshold && next.x <= -threshold) || (next.x > -threshold && curr.x <= -threshold)) {
+      edges.add('left');
+    }
+    // Top boundary: segment crosses y = threshold
+    if ((curr.y < threshold && next.y >= threshold) || (next.y < threshold && curr.y >= threshold)) {
+      edges.add('top');
+    }
+    // Bottom boundary: segment crosses y = -threshold
+    if ((curr.y > -threshold && next.y <= -threshold) || (next.y > -threshold && curr.y <= -threshold)) {
+      edges.add('bottom');
+    }
   }
 
   if (edges.size === 0) {
@@ -452,10 +505,30 @@ function projectToRoundedCube(
 }
 
 
+// Generate a subtle color variation for a cell based on its ID and side
+// Uses seeded randomness so colors are consistent across renders
+function getCellColor(cellId: number, sideId: number): THREE.Color {
+  // Seed based on cell and side for consistency
+  const seed = cellId * 7 + sideId * 31;
+  const pseudoRandom = (n: number) => {
+    const x = Math.sin(seed + n * 12.9898) * 43758.5453;
+    return x - Math.floor(x);
+  };
+
+  // Base orange hue with slight variations
+  // Hue: 0.06-0.10 (orange range), Saturation: 0.7-0.9, Lightness: 0.6-0.75
+  const hue = 0.06 + pseudoRandom(1) * 0.04;
+  const saturation = 0.7 + pseudoRandom(2) * 0.2;
+  const lightness = 0.6 + pseudoRandom(3) * 0.15;
+
+  return new THREE.Color().setHSL(hue, saturation, lightness);
+}
+
 // Create curved mesh from polygon vertices projected onto rounded cube
 // Returns a Group containing the cell mesh and an outline
 function createCurvedCellMesh(
   vertices: THREE.Vector2[],
+  cellId: number,
   sideId: number,
   roundness: number,
   radius: number,
@@ -528,37 +601,62 @@ function createCurvedCellMesh(
   const peelTexture = getPeelTexture();
   const peelNormalMap = getPeelNormalMap();
 
+  // Use cell-specific color tint for unpeeled cells to help path planning
+  const cellColor = getCellColor(cellId, sideId);
+
   const material = new THREE.MeshStandardMaterial({
-    color: peeled ? 0xffddaa : 0xffffff,
+    color: peeled ? 0xffddaa : cellColor,
     map: peelTexture,
     normalMap: peelNormalMap,
-    normalScale: new THREE.Vector2(0.3, 0.3),
+    normalScale: new THREE.Vector2(0.6, 0.6),
     side: THREE.DoubleSide,
     flatShading: false,
-    roughness: 0.7,
-    metalness: 0.0,
+    roughness: 0.5,
+    metalness: 0.05,
   });
 
   return new THREE.Mesh(geometry, material);
 }
 
-// Validate that a cell layout is playable
+// Validate that a cell layout is playable and fair
 // Requirements:
-// 1. At least one edge cell exists
-// 2. For multi-cell sides, there's a path from any cell to at least one edge cell
+// 1. Cells must touch ALL 4 edges (top, bottom, left, right) for guaranteed exits
+// 2. No single cell should cover all 4 edges (creates unfair forced choice)
+// 3. For multi-cell sides, there's a path from any cell to at least one edge cell
 function isLayoutPlayable(cells: { id: number; edge: EdgeType; edges: EdgeType[]; neighborIds: number[] }[]): boolean {
   if (cells.length === 0) return false;
   if (cells.length === 1) {
-    // Single cell must be an edge cell
-    return cells[0].edge !== 'center';
+    // Single cell side is only valid if it touches all 4 edges
+    const edges = cells[0].edges;
+    return edges.includes('top') && edges.includes('bottom') &&
+           edges.includes('left') && edges.includes('right');
   }
 
-  // Must have at least one edge cell
-  const edgeCells = cells.filter(c => c.edge !== 'center');
-  if (edgeCells.length === 0) return false;
+  // Reject layouts where any cell covers all 4 edges (unfair - no exit choice)
+  for (const cell of cells) {
+    const edges = cell.edges.filter(e => e !== 'center');
+    if (edges.includes('top') && edges.includes('bottom') &&
+        edges.includes('left') && edges.includes('right')) {
+      return false; // Cell covers full side - regenerate
+    }
+  }
+
+  // Collect all edges that cells touch
+  const touchedEdges = new Set<EdgeType>();
+  for (const cell of cells) {
+    for (const edge of cell.edges) {
+      touchedEdges.add(edge);
+    }
+  }
+
+  // Must have cells touching all 4 edges for fair gameplay
+  if (!touchedEdges.has('top') || !touchedEdges.has('bottom') ||
+      !touchedEdges.has('left') || !touchedEdges.has('right')) {
+    return false;
+  }
 
   // Check that every cell can reach at least one edge cell via neighbors
-  // BFS from each non-edge cell to verify connectivity
+  // BFS from each center cell to verify connectivity
   for (const cell of cells) {
     if (cell.edge !== 'center') continue; // Edge cells are fine
 
@@ -703,14 +801,19 @@ export function createCellMeshes(cells: Omit<PeelCell, 'mesh'>[]): PeelCell[] {
 export function updateCellVisual(cell: PeelCell): void {
   const material = cell.mesh.material as THREE.MeshStandardMaterial;
   if (cell.peeled) {
-    // Show inner body texture (lighter orange flesh)
+    // Show inner body texture (lighter orange flesh) - matte finish
     material.map = getBodyTexture();
-    material.color.setHex(0xffffff);
+    material.color.setHex(0xffddaa);
+    material.roughness = 0.9;
+    material.metalness = 0.0;
     material.needsUpdate = true;
   } else {
-    // Show outer peel texture (bright orange)
+    // Show outer peel texture (bright orange) - slight shine with cell-specific tint
     material.map = getPeelTexture();
-    material.color.setHex(0xffffff);
+    const cellColor = getCellColor(cell.id, cell.sideId);
+    material.color.copy(cellColor);
+    material.roughness = 0.5;
+    material.metalness = 0.05;
     material.needsUpdate = true;
   }
 }
@@ -724,6 +827,6 @@ export function createCellMeshesForCurvedSurface(
 ): PeelCell[] {
   return cells.map(cell => ({
     ...cell,
-    mesh: createCurvedCellMesh(cell.vertices, sideId, roundness, radius, cell.peeled),
+    mesh: createCurvedCellMesh(cell.vertices, cell.id, sideId, roundness, radius, cell.peeled),
   }));
 }

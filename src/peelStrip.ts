@@ -82,6 +82,14 @@ export class PeelStrip {
   // Fun physics
   private time: number = 0;
 
+  // Reusable vectors to avoid allocations in hot paths
+  private tempVec1 = new THREE.Vector3();
+  private tempVec2 = new THREE.Vector3();
+  private tempVelocity = new THREE.Vector3();
+
+  // Flag to track when normals need recomputation
+  private needsNormalUpdate = false;
+
   // Orbit animation state
   private isOrbiting: boolean = false;
   private orbitAngle: number = 0;
@@ -468,24 +476,19 @@ export class PeelStrip {
       const pv = this.physicsVertices[i];
       if (pv.pinned) continue;
 
-      const velocity = pv.position.clone().sub(pv.previousPosition);
+      // Reuse tempVelocity instead of cloning
+      this.tempVelocity.copy(pv.position).sub(pv.previousPosition);
       pv.previousPosition.copy(pv.position);
 
-      pv.position.add(velocity.multiplyScalar(damping));
-      pv.position.add(this.gravity.clone().multiplyScalar(dt * dt));
-
-      // Add chaotic wind/flutter force - different frequency per vertex
-      const flutter = 8.0;
-      const windX = Math.sin(this.time * 7.3 + i * 1.7) * flutter * dt * dt;
-      const windY = Math.cos(this.time * 5.1 + i * 2.3) * flutter * dt * dt * 0.5;
-      const windZ = Math.sin(this.time * 6.7 + i * 1.1) * flutter * dt * dt;
-      pv.position.x += windX;
-      pv.position.y += windY;
-      pv.position.z += windZ;
+      pv.position.add(this.tempVelocity.multiplyScalar(damping));
+      // Reuse tempVec1 for gravity calculation
+      this.tempVec1.copy(this.gravity).multiplyScalar(dt * dt);
+      pv.position.add(this.tempVec1);
+      // Wind flutter removed for mobile performance
     }
 
-    // Solve constraints - fewer iterations = more stretchy/wobbly
-    const iterations = 2;
+    // Solve constraints - 1 iteration for performance (still stable enough)
+    const iterations = 1;
     for (let iter = 0; iter < iterations; iter++) {
       this.solveConstraints();
     }
@@ -498,21 +501,22 @@ export class PeelStrip {
       const pvA = this.physicsVertices[c.a];
       const pvB = this.physicsVertices[c.b];
 
-      const delta = pvB.position.clone().sub(pvA.position);
-      const currentLength = delta.length();
+      // Reuse tempVec2 instead of cloning
+      this.tempVec2.copy(pvB.position).sub(pvA.position);
+      const currentLength = this.tempVec2.length();
 
       if (currentLength < 0.0001) continue;
 
       const diff = (currentLength - c.restLength) / currentLength;
 
       if (!pvA.pinned && !pvB.pinned) {
-        const correction = delta.multiplyScalar(0.5 * diff);
-        pvA.position.add(correction);
-        pvB.position.sub(correction);
+        this.tempVec2.multiplyScalar(0.5 * diff);
+        pvA.position.add(this.tempVec2);
+        pvB.position.sub(this.tempVec2);
       } else if (!pvA.pinned) {
-        pvA.position.add(delta.multiplyScalar(diff));
+        pvA.position.add(this.tempVec2.multiplyScalar(diff));
       } else if (!pvB.pinned) {
-        pvB.position.sub(delta.multiplyScalar(diff));
+        pvB.position.sub(this.tempVec2.multiplyScalar(diff));
       }
     }
   }
@@ -528,7 +532,12 @@ export class PeelStrip {
 
     const posAttr = this.geometry.getAttribute('position') as THREE.BufferAttribute;
     posAttr.needsUpdate = true;
-    this.geometry.computeVertexNormals();
+
+    // Only recompute normals when geometry topology changed (new cells added)
+    if (this.needsNormalUpdate) {
+      this.geometry.computeVertexNormals();
+      this.needsNormalUpdate = false;
+    }
   }
 
   private updateGeometry(): void {
@@ -539,6 +548,8 @@ export class PeelStrip {
     indexAttr.needsUpdate = true;
 
     this.geometry.setDrawRange(0, this.indexCount);
+    // Set flag to recompute normals on next sync (topology changed)
+    this.needsNormalUpdate = true;
     this.geometry.computeVertexNormals();
   }
 

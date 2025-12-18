@@ -12,14 +12,21 @@ import { createMandarin, isSideComplete } from './mandarin';
 import { updateCellVisual } from './voronoi';
 import { InputManager, InputState } from './input';
 import { PeelStrip } from './peelStrip';
+import { GameRecorder } from './recorder';
 import { i18n } from './i18n';
-import { telegram, submitScore, getLeaderboard, createDonationInvoice } from './telegram';
+import { telegram, submitScore, getLeaderboard, createDonationInvoice, getAnonymousUserId, getAnonymousUserName } from './telegram';
 import { line } from './line';
-import { ChristmasEmojiBackground } from './christmasEmoji';
+
+// Game settings (code-level configuration)
+const GAME_SETTINGS = {
+  /** Set to false to disable video clip recording */
+  enableClipRecording: false,
+};
 
 // Juice particle for spray effect
 interface JuiceParticle {
   mesh: THREE.Mesh;
+  geometry?: THREE.BufferGeometry; // For victory particles with custom geometry
   velocity: THREE.Vector3;
   life: number;
   maxLife: number;
@@ -74,11 +81,12 @@ export class Game {
   private winScreen: HTMLDivElement;
 
   // Stats tracking
-  private streak: number = 0;
-  private bestStreak: number = 0;
   private totalTries: number = 0;
   private totalWins: number = 0;
   private lastWinTime: string = '';
+
+  // Fixed cells per side
+  private readonly CELLS_PER_SIDE = 7;
 
   // Streak HUD element
   private streakHUD: HTMLDivElement | null = null;
@@ -89,9 +97,26 @@ export class Game {
   private stemVelocity: THREE.Vector3 = new THREE.Vector3();
   private stemRotationVelocity: THREE.Vector3 = new THREE.Vector3();
 
-  // Christmas background
-  private emojiBackground: ChristmasEmojiBackground | null = null;
+  // Showcase rotation (after win/lose)
+  private showcaseRotating: boolean = false;
+  private showcaseTime: number = 0;
 
+  // Reusable objects to avoid allocations in hot paths
+  private tempEuler = new THREE.Euler();
+  private identityQuat = new THREE.Quaternion();
+  private tempQuat = new THREE.Quaternion();
+  private tempVec3 = new THREE.Vector3();
+
+  // Debounced resize handling
+  private resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  // Cached unpeeled meshes for raycasting
+  private unpeeledMeshCache: THREE.Mesh[] = [];
+  private meshCacheDirty = true;
+
+  // Video recording
+  private recorder: GameRecorder | null = null;
+  private lastRecordedBlob: Blob | null = null;
 
   constructor() {
     // Initialize Three.js
@@ -99,7 +124,8 @@ export class Game {
     this.scene.background = null; // Transparent to show HTML background
 
     // Add lights for MeshStandardMaterial
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    // Lower ambient for more contrast between cells
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
     this.scene.add(ambientLight);
 
     this.camera = new THREE.PerspectiveCamera(
@@ -111,19 +137,26 @@ export class Game {
     this.camera.position.z = 5.5;
 
     // Add directional lights as children of camera so they rotate with it
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(1, 1, 1); // In front and slightly above/right in camera space
+    // Strong side light to create shadows between cells
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    directionalLight.position.set(2, 1, 0.5); // More from the side to highlight cell edges
     this.camera.add(directionalLight);
 
-    const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.4);
-    directionalLight2.position.set(-1, -1, 1); // Fill light from opposite side
+    const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
+    directionalLight2.position.set(-1, -0.5, 1); // Subtle fill light
     this.camera.add(directionalLight2);
 
     this.scene.add(this.camera); // Camera must be in scene for its children to render
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: window.devicePixelRatio < 2, // Disable AA on high-DPI (unnecessary)
+      alpha: true,
+      powerPreference: 'high-performance',
+    });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Cap pixel ratio at 1.0 for mobile performance (prevents overheating)
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    this.renderer.setPixelRatio(isMobile ? 1.0 : Math.min(window.devicePixelRatio, 1.5));
     document.body.appendChild(this.renderer.domElement);
 
     this.input = new InputManager(this.renderer.domElement);
@@ -153,8 +186,8 @@ export class Game {
     // Create streak HUD
     this.createStreakHUD();
 
-    // Initialize juice particle system
-    this.juiceGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+    // Initialize juice particle system (low-poly for performance)
+    this.juiceGeometry = new THREE.SphereGeometry(0.15, 6, 4);
     this.juiceMaterial = new THREE.MeshBasicMaterial({
       color: 0xffaa00,
       transparent: true,
@@ -164,9 +197,6 @@ export class Game {
     // Load saved stats
     this.loadStats();
 
-    // Create Christmas emoji background (self-managing, no reference needed)
-    this.emojiBackground = new ChristmasEmojiBackground(25);
-
     // Show title screen
     this.showScreen('title');
   }
@@ -175,10 +205,9 @@ export class Game {
     this.edgeIndicatorGroup = new THREE.Group();
     this.edgeIndicatorGroup.name = 'edge-indicators';
 
-    // Horizontal bar for top/bottom
-    const horzGeometry = new THREE.BoxGeometry(1.2, 0.12, 0.02);
-    // Vertical bar for left/right
-    const vertGeometry = new THREE.BoxGeometry(0.12, 1.2, 0.02);
+    // Placeholder geometries - will be resized in updateEdgeIndicatorPositions
+    const horzGeometry = new THREE.BoxGeometry(1, 0.08, 0.02);
+    const vertGeometry = new THREE.BoxGeometry(0.08, 1, 0.02);
 
     const indicatorMaterial = new THREE.MeshBasicMaterial({
       color: 0xff8833,
@@ -191,7 +220,7 @@ export class Game {
     topIndicator.name = 'indicator-top';
 
     // Bottom indicator (player swipes down to go to bottom side)
-    const bottomIndicator = new THREE.Mesh(horzGeometry, indicatorMaterial.clone());
+    const bottomIndicator = new THREE.Mesh(horzGeometry.clone(), indicatorMaterial.clone());
     bottomIndicator.name = 'indicator-bottom';
 
     // Left indicator (player swipes left to go to left side)
@@ -199,7 +228,7 @@ export class Game {
     leftIndicator.name = 'indicator-left';
 
     // Right indicator (player swipes right to go to right side)
-    const rightIndicator = new THREE.Mesh(vertGeometry, indicatorMaterial.clone());
+    const rightIndicator = new THREE.Mesh(vertGeometry.clone(), indicatorMaterial.clone());
     rightIndicator.name = 'indicator-right';
 
     this.edgeIndicatorGroup.add(topIndicator, bottomIndicator, leftIndicator, rightIndicator);
@@ -212,7 +241,7 @@ export class Game {
       right: rightIndicator,
     };
 
-    // Position indicators based on current aspect ratio
+    // Position and size indicators based on current aspect ratio
     this.updateEdgeIndicatorPositions();
   }
 
@@ -240,23 +269,8 @@ export class Game {
   private updateStreakHUD(): void {
     if (!this.streakHUD) return;
 
-    if (this.state.status === 'playing' && this.streak > 0) {
-      const cellsPerSide = this.getCellsPerSide();
-      this.streakHUD.textContent = `🔥 ${this.streak} | ${cellsPerSide} cells`;
-      this.streakHUD.style.opacity = '1';
-    } else if (this.state.status === 'playing') {
-      const cellsPerSide = this.getCellsPerSide();
-      this.streakHUD.textContent = `${cellsPerSide} cells`;
-      this.streakHUD.style.opacity = '1';
-    } else {
-      this.streakHUD.style.opacity = '0';
-    }
-  }
-
-  // Calculate cells per side based on streak: 1, 3, 5, 7, 9... (each round)
-  private getCellsPerSide(): number {
-    // streak 0 → 1 cell, streak 1 → 3, streak 2 → 5, streak 3 → 7, etc.
-    return 1 + this.streak * 2;
+    // Hide HUD during gameplay - only mandarin visible
+    this.streakHUD.style.opacity = '0';
   }
 
   private updateEdgeIndicatorPositions(): void {
@@ -270,15 +284,32 @@ export class Game {
     const visibleHeight = 2 * Math.tan(fov / 2) * Math.abs(zOffset);
     const visibleWidth = visibleHeight * aspect;
 
-    // Position indicators near edges (80% towards edge)
-    const edgeFactor = 0.80;
-    const verticalDist = (visibleHeight / 2) * edgeFactor;
-    const horizontalDist = (visibleWidth / 2) * edgeFactor;
+    const barThickness = 0.08; // Thin bars at screen edges
 
-    this.edgeIndicators.top.position.set(0, verticalDist, zOffset);
-    this.edgeIndicators.bottom.position.set(0, -verticalDist, zOffset);
-    this.edgeIndicators.left.position.set(-horizontalDist, 0, zOffset);
-    this.edgeIndicators.right.position.set(horizontalDist, 0, zOffset);
+    // Dispose old geometries and create new ones sized to screen
+    // Top/bottom bars: full width
+    const horzGeometry = new THREE.BoxGeometry(visibleWidth, barThickness, 0.02);
+    // Left/right bars: full height
+    const vertGeometry = new THREE.BoxGeometry(barThickness, visibleHeight, 0.02);
+
+    // Update geometries
+    this.edgeIndicators.top.geometry.dispose();
+    this.edgeIndicators.top.geometry = horzGeometry;
+    this.edgeIndicators.bottom.geometry.dispose();
+    this.edgeIndicators.bottom.geometry = horzGeometry.clone();
+    this.edgeIndicators.left.geometry.dispose();
+    this.edgeIndicators.left.geometry = vertGeometry;
+    this.edgeIndicators.right.geometry.dispose();
+    this.edgeIndicators.right.geometry = vertGeometry.clone();
+
+    // Position at actual screen edges
+    const verticalEdge = visibleHeight / 2 - barThickness / 2;
+    const horizontalEdge = visibleWidth / 2 - barThickness / 2;
+
+    this.edgeIndicators.top.position.set(0, verticalEdge, zOffset);
+    this.edgeIndicators.bottom.position.set(0, -verticalEdge, zOffset);
+    this.edgeIndicators.left.position.set(-horizontalEdge, 0, zOffset);
+    this.edgeIndicators.right.position.set(horizontalEdge, 0, zOffset);
   }
 
   // Check if going to a specific side leaves a viable path to complete the game
@@ -445,7 +476,9 @@ export class Game {
     const tiltX = -normalizedPosition.y * this.tiltAmount; // Pitch (up/down)
     const tiltY = normalizedPosition.x * this.tiltAmount;  // Yaw (left/right)
 
-    this.targetTilt.setFromEuler(new THREE.Euler(tiltX, tiltY, 0));
+    // Reuse tempEuler instead of allocating new Euler
+    this.tempEuler.set(tiltX, tiltY, 0);
+    this.targetTilt.setFromEuler(this.tempEuler);
   }
 
   private updateTilt(): void {
@@ -461,13 +494,14 @@ export class Game {
       // Smoothly interpolate towards target tilt
       this.currentTilt.slerp(this.targetTilt, 0.12);
       // Apply tilt to camera rotation (tilt is in camera's local space)
-      const finalRotation = this.baseCameraRotation.clone().multiply(this.currentTilt);
-      this.camera.quaternion.copy(finalRotation);
+      // Reuse tempQuat instead of cloning
+      this.tempQuat.copy(this.baseCameraRotation).multiply(this.currentTilt);
+      this.camera.quaternion.copy(this.tempQuat);
     } else if (!isNearIdentity) {
-      // Return to neutral when not touching
-      this.currentTilt.slerp(new THREE.Quaternion(), 0.15);
-      const finalRotation = this.baseCameraRotation.clone().multiply(this.currentTilt);
-      this.camera.quaternion.copy(finalRotation);
+      // Return to neutral when not touching - use identityQuat instead of new Quaternion()
+      this.currentTilt.slerp(this.identityQuat, 0.15);
+      this.tempQuat.copy(this.baseCameraRotation).multiply(this.currentTilt);
+      this.camera.quaternion.copy(this.tempQuat);
     }
   }
 
@@ -485,10 +519,11 @@ export class Game {
   }
 
   private spawnJuiceParticles(position: THREE.Vector3, normal: THREE.Vector3): void {
-    const particleCount = 8 + Math.floor(Math.random() * 5); // 8-12 particles
+    const particleCount = 4 + Math.floor(Math.random() * 3); // 4-6 particles (optimized)
 
     for (let i = 0; i < particleCount; i++) {
-      const mesh = new THREE.Mesh(this.juiceGeometry, this.juiceMaterial.clone());
+      // Share material instead of cloning - all particles same color
+      const mesh = new THREE.Mesh(this.juiceGeometry, this.juiceMaterial);
       mesh.position.copy(position);
 
       // Random velocity spraying outward from the surface
@@ -517,16 +552,20 @@ export class Game {
       const particle = this.juiceParticles[i];
       particle.life += deltaTime;
 
-      // Update position
-      particle.mesh.position.add(particle.velocity.clone().multiplyScalar(deltaTime));
+      // Update position - reuse tempVec3 instead of cloning
+      this.tempVec3.copy(particle.velocity).multiplyScalar(deltaTime);
+      particle.mesh.position.add(this.tempVec3);
 
       // Apply gravity
       particle.velocity.y -= 5 * deltaTime;
 
-      // Fade out
+      // Fade out - only for victory particles with custom materials
       const lifeRatio = particle.life / particle.maxLife;
-      const material = particle.mesh.material as THREE.MeshBasicMaterial;
-      material.opacity = 1.0 * (1 - lifeRatio * 0.7);
+      if (particle.geometry) {
+        // Victory particle has its own cloned material
+        const material = particle.mesh.material as THREE.MeshBasicMaterial;
+        material.opacity = 1.0 * (1 - lifeRatio * 0.7);
+      }
 
       // Shrink slightly
       const scale = 1 - lifeRatio * 0.3;
@@ -535,7 +574,11 @@ export class Game {
       // Remove dead particles
       if (particle.life >= particle.maxLife) {
         this.scene.remove(particle.mesh);
-        material.dispose();
+        // Dispose custom geometry and material for victory particles
+        if (particle.geometry) {
+          particle.geometry.dispose();
+          (particle.mesh.material as THREE.MeshBasicMaterial).dispose();
+        }
         this.juiceParticles.splice(i, 1);
       }
     }
@@ -544,7 +587,11 @@ export class Game {
   private clearJuiceParticles(): void {
     for (const particle of this.juiceParticles) {
       this.scene.remove(particle.mesh);
-      (particle.mesh.material as THREE.MeshBasicMaterial).dispose();
+      // Dispose custom geometry and material for victory particles
+      if (particle.geometry) {
+        particle.geometry.dispose();
+        (particle.mesh.material as THREE.MeshBasicMaterial).dispose();
+      }
     }
     this.juiceParticles = [];
   }
@@ -583,16 +630,43 @@ export class Game {
     }
   }
 
+  private startShowcaseRotation(): void {
+    this.showcaseRotating = true;
+    this.showcaseTime = 0;
+  }
+
+  private stopShowcaseRotation(): void {
+    this.showcaseRotating = false;
+    if (this.mandarinGroup) {
+      this.mandarinGroup.rotation.set(0, 0, 0);
+    }
+  }
+
+  private updateShowcaseRotation(deltaTime: number): void {
+    if (!this.showcaseRotating || !this.mandarinGroup) return;
+
+    this.showcaseTime += deltaTime;
+
+    // Rotate slowly around Y axis (horizontal spin)
+    // Plus gentle wobble on X axis to show top/bottom
+    const ySpeed = 0.3; // Rotations per ~20 seconds for full view
+    const xWobbleSpeed = 0.15;
+    const xWobbleAmount = 0.4; // ~23 degrees
+
+    this.mandarinGroup.rotation.y = this.showcaseTime * Math.PI * ySpeed;
+    this.mandarinGroup.rotation.x = Math.sin(this.showcaseTime * Math.PI * xWobbleSpeed) * xWobbleAmount;
+  }
+
   private spawnVictoryJuiceBurst(): void {
-    const particleCount = 80 + Math.floor(Math.random() * 40); // 80-120 particles
+    const particleCount = 40 + Math.floor(Math.random() * 20); // 40-60 particles (optimized)
 
     // Direction towards camera
     const toCamera = this.camera.position.clone().normalize();
 
     for (let i = 0; i < particleCount; i++) {
       // Larger particles for victory burst
-      const size = 0.1 + Math.random() * 0.25;
-      const geometry = new THREE.SphereGeometry(size, 8, 8);
+      const size = 0.12 + Math.random() * 0.28; // Slightly larger to compensate for fewer
+      const geometry = new THREE.SphereGeometry(size, 6, 4); // Low-poly
       const material = this.juiceMaterial.clone();
 
       // Vary colors between orange and yellow
@@ -623,6 +697,7 @@ export class Game {
 
       const particle: JuiceParticle = {
         mesh,
+        geometry, // Store reference for proper disposal
         velocity,
         life: 0,
         maxLife: 1.5 + Math.random() * 1.0, // Longer life for dramatic effect
@@ -651,8 +726,6 @@ export class Game {
       const saved = localStorage.getItem('mandarin-stats');
       if (saved) {
         const stats = JSON.parse(saved);
-        this.streak = stats.streak ?? 0;
-        this.bestStreak = stats.bestStreak ?? 0;
         this.totalTries = stats.totalTries ?? 0;
         this.totalWins = stats.totalWins ?? 0;
       }
@@ -664,8 +737,6 @@ export class Game {
   private saveStats(): void {
     try {
       localStorage.setItem('mandarin-stats', JSON.stringify({
-        streak: this.streak,
-        bestStreak: this.bestStreak,
         totalTries: this.totalTries,
         totalWins: this.totalWins,
       }));
@@ -713,8 +784,10 @@ export class Game {
       <a id="author-link" href="https://t.me/nikita_kv" target="_blank" style="font-size: 0.9rem; color: #88aa88; text-decoration: none; margin-bottom: 1rem; display: block;">by @nikita_kv</a>
       <p style="font-size: 1.2rem; color: #ffcc88; margin-bottom: 1.5rem;">${i18n.subtitle}</p>
       <div id="title-leaderboard" style="margin-bottom: 1.5rem; display: none;">
-        <h3 style="font-size: 1rem; color: #ffdd44; margin-bottom: 0.5rem;">${i18n.leaderboard}</h3>
-        <table id="leaderboard-table" style="border-collapse: collapse; font-size: 0.9rem;">
+        <h3 style="font-size: 1rem; color: #ffdd44; margin-bottom: 0.5rem;">${i18n.leaderboard} (${i18n.formatCellsCount(this.CELLS_PER_SIDE)})</h3>
+        <div id="leaderboard-tabs" style="display: flex; gap: 0.25rem; margin-bottom: 0.5rem; flex-wrap: wrap; justify-content: center;">
+        </div>
+        <table id="leaderboard-table" style="border-collapse: collapse; font-size: 0.85rem; width: 100%;">
         </table>
       </div>
       <p id="title-stats" style="font-size: 1rem; color: #88cc88; margin-bottom: 1rem;"></p>
@@ -892,19 +965,32 @@ export class Game {
       <p id="win-stats" style="font-size: 1.2rem; color: #ffcc88; margin-bottom: 1rem;"></p>
       <p id="win-leaderboard" style="font-size: 1rem; color: #ffdd44; margin-bottom: 0.5rem; display: none;"></p>
       <p id="win-streak" style="font-size: 1rem; color: #ffaa66; margin-bottom: 1.5rem;"></p>
-      <button id="share-btn" style="
-        padding: 0.8rem 1.5rem;
-        font-size: 1.1rem;
-        background: linear-gradient(135deg, #66dd66, #44bb44);
-        border: none;
-        border-radius: 8px;
-        color: white;
-        cursor: pointer;
-        font-weight: bold;
-        box-shadow: 0 2px 8px rgba(68, 187, 68, 0.4);
-        margin-bottom: 1.5rem;
-        display: none;
-      ">${i18n.share}</button>
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 1.5rem;">
+        <button id="share-btn" style="
+          padding: 0.8rem 1.5rem;
+          font-size: 1.1rem;
+          background: linear-gradient(135deg, #66dd66, #44bb44);
+          border: none;
+          border-radius: 8px;
+          color: white;
+          cursor: pointer;
+          font-weight: bold;
+          box-shadow: 0 2px 8px rgba(68, 187, 68, 0.4);
+          display: none;
+        ">${i18n.share}</button>
+        <button id="download-clip-btn" style="
+          padding: 0.8rem 1.5rem;
+          font-size: 1.1rem;
+          background: linear-gradient(135deg, #ff8833, #ff6600);
+          border: none;
+          border-radius: 8px;
+          color: white;
+          cursor: pointer;
+          font-weight: bold;
+          box-shadow: 0 2px 8px rgba(255, 102, 0, 0.4);
+          display: none;
+        ">📹 Save Clip</button>
+      </div>
       <p style="font-size: 1rem; color: #66aa66;">${i18n.tapToPlayAgain}</p>
     `;
 
@@ -920,16 +1006,28 @@ export class Game {
       });
     }
 
-    // Handle tap to return (but not on share button)
+    // Handle download clip button
+    const downloadClipBtn = screen.querySelector('#download-clip-btn') as HTMLButtonElement;
+    if (downloadClipBtn) {
+      downloadClipBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.downloadLastClip();
+      });
+      downloadClipBtn.addEventListener('touchstart', (e) => {
+        e.stopPropagation();
+      });
+    }
+
+    // Handle tap to return (but not on share/download buttons)
     const returnToTitle = (e: Event) => {
       const target = e.target as HTMLElement;
-      if (target.id === 'share-btn') return;
+      if (target.id === 'share-btn' || target.id === 'download-clip-btn') return;
       this.returnToTitle();
     };
     screen.addEventListener('click', returnToTitle);
     screen.addEventListener('touchstart', (e) => {
       const target = e.target as HTMLElement;
-      if (target.id === 'share-btn') return;
+      if (target.id === 'share-btn' || target.id === 'download-clip-btn') return;
       e.preventDefault();
       this.returnToTitle();
     });
@@ -945,8 +1043,8 @@ export class Game {
     // Update title screen stats when shown
     if (screen === 'title') {
       const statsEl = this.titleScreen.querySelector('#title-stats') as HTMLElement;
-      if (this.totalTries > 0) {
-        statsEl.textContent = i18n.formatStats(this.totalWins, this.totalTries, this.streak);
+      if (this.totalWins > 0) {
+        statsEl.textContent = i18n.formatTotalPeeled(this.totalWins);
       } else {
         statsEl.textContent = '';
       }
@@ -957,34 +1055,41 @@ export class Game {
 
   private async loadLeaderboard(): Promise<void> {
     const container = this.titleScreen.querySelector('#title-leaderboard') as HTMLElement;
+    const tabsContainer = this.titleScreen.querySelector('#leaderboard-tabs') as HTMLElement;
     const table = this.titleScreen.querySelector('#leaderboard-table') as HTMLTableElement;
-    if (!container || !table) return;
+    if (!container || !table || !tabsContainer) return;
 
-    // Only load leaderboard in Telegram or LINE
-    if (!telegram.isAvailable && !line.isAvailable) {
-      container.style.display = 'none';
-      return;
-    }
+    // Hide tabs - no tabs needed
+    tabsContainer.style.display = 'none';
 
-    // Filter by platform - show only scores from the same platform
-    const platform = line.isInClient ? 'line' : (telegram.isAvailable ? 'telegram' : undefined);
-    const data = await getLeaderboard(10, platform);
+    // Determine which platform's leaderboard to show:
+    // - Telegram users see Telegram leaderboard
+    // - LINE users see LINE leaderboard
+    // - Web users see Telegram leaderboard
+    const platformToShow: 'telegram' | 'line' = line.isInClient ? 'line' : 'telegram';
+
+    // Fetch leaderboard for this platform
+    const data = await getLeaderboard(10, platformToShow, { cellCount: this.CELLS_PER_SIDE });
+
     if (!data || data.leaderboard.length === 0) {
-      container.style.display = 'none';
+      table.innerHTML = '<tr><td style="color: #666; padding: 0.5rem;">No scores yet</td></tr>';
+      container.style.display = 'block';
       return;
     }
 
-    // Build table rows - use string comparison for user ID
-    const currentUserId = telegram.userId?.toString() ?? line.userId ?? null;
+    // Build table rows - use string comparison for user ID (Telegram, LINE, or Web)
+    const currentUserId = telegram.userId?.toString() ?? line.userId ?? getAnonymousUserId();
+
+    // Time leaderboard: show rank, name, time
     table.innerHTML = data.leaderboard.map((entry) => {
       const isCurrentUser = currentUserId === entry.odaUserId;
       const rowStyle = isCurrentUser ? 'background: rgba(255, 221, 68, 0.2);' : '';
       const nameStyle = isCurrentUser ? 'color: #ffdd44; font-weight: bold;' : 'color: #cccccc;';
       return `
         <tr style="${rowStyle}">
-          <td style="padding: 0.2rem 0.5rem; color: #ffaa66;">#${entry.rank}</td>
-          <td style="padding: 0.2rem 0.5rem; ${nameStyle}">${this.escapeHtml(entry.odaName)}</td>
-          <td style="padding: 0.2rem 0.5rem; color: #88cc88;">${entry.time.toFixed(1)}s</td>
+          <td style="padding: 0.15rem 0.3rem; color: #ffaa66;">#${entry.rank}</td>
+          <td style="padding: 0.15rem 0.3rem; ${nameStyle} max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${this.escapeHtml(entry.odaName)}</td>
+          <td style="padding: 0.15rem 0.3rem; color: #88cc88;">${entry.time.toFixed(2)}s</td>
         </tr>
       `;
     }).join('');
@@ -1028,14 +1133,17 @@ export class Game {
     const currentSide = this.state.sides[this.state.currentSide];
     if (!currentSide) return;
 
-    // Get intersections with current side's UNPEELED cells only
-    const unpeeledCells = currentSide.cells.filter((c) => !c.peeled);
-    const meshes = unpeeledCells.map((c) => c.mesh);
-    const intersects = this.raycaster.intersectObjects(meshes);
+    // Use cached unpeeled meshes to avoid array allocations every frame
+    if (this.meshCacheDirty) {
+      const unpeeledCells = currentSide.cells.filter((c) => !c.peeled);
+      this.unpeeledMeshCache = unpeeledCells.map((c) => c.mesh);
+      this.meshCacheDirty = false;
+    }
+    const intersects = this.raycaster.intersectObjects(this.unpeeledMeshCache);
 
     if (intersects.length > 0) {
       const hitMesh = intersects[0].object as THREE.Mesh;
-      const cell = unpeeledCells.find((c) => c.mesh === hitMesh);
+      const cell = currentSide.cells.find((c) => c.mesh === hitMesh && !c.peeled);
 
       if (cell) {
         // Check if cell is connected to already-peeled cells
@@ -1080,6 +1188,7 @@ export class Game {
     this.state.peeledCount++;
     this.state.lastPeeledEdge = cell.edge;
     this.lastPeeledCellId = cell.id;
+    this.meshCacheDirty = true; // Invalidate cache when cell is peeled
     updateCellVisual(cell);
 
     // Make stem fall off when peeling TOP side (side 2)
@@ -1118,82 +1227,38 @@ export class Game {
       // Check if game won
       const peeledSides = this.state.sides.filter((s) => s.peeled).map((s) => s.id);
       console.log(`Side ${side.id} complete. Peeled sides: [${peeledSides.join(', ')}] (${peeledSides.length}/6)`);
+      console.log(`Side ${side.id} cells:`, side.cells.map(c => `id=${c.id} peeled=${c.peeled} edges=[${c.edges.join(',')}]`).join(' | '));
       if (this.state.sides.every((s) => s.peeled)) {
         this.win();
         return;
       }
 
-      // Check for center cell game over
-      if (cell.edge === 'center') {
-        this.gameOver(i18n.endedOnCenter);
-        return;
-      }
-
-      // Transition to next side - favor player by checking all edges cell touches
+      // Transition to next side - only if LAST PEELED CELL touches an available side
       const validEdge = this.findValidTransitionEdge(cell, side);
       if (validEdge) {
         this.transitionToNextSide(validEdge);
       } else {
-        // All adjacent sides from this cell are already peeled
+        // Last cell doesn't touch any unpeeled side - game over
+        const cellEdges = cell.edges.filter(e => e !== 'center');
+        console.log(`Last cell (id=${cell.id}, edges=[${cellEdges.join(',')}]) doesn't touch any unpeeled side`);
         this.gameOver(i18n.noValidExit);
       }
     }
   }
 
-  // Find a valid edge to transition to, favoring viable paths
-  // Only considers edges that the LAST PEELED CELL touches - player must strategically end on correct edge
-  // IMPORTANT: When a cell touches multiple edges, we MUST choose a viable path if one exists
+  // Find any edge from the last peeled cell that leads to an unpeeled side
   private findValidTransitionEdge(cell: PeelCell, side: MandarinSide): EdgeType | null {
-    // Filter out 'center' from edges - only edges the last cell touches
-    const exitEdges = cell.edges.filter((e): e is Exclude<EdgeType, 'center'> => e !== 'center');
-
-    if (exitEdges.length === 0) {
-      return null;
-    }
-
-    // Collect all unpeeled adjacent sides this cell can reach
-    const unpeeledEdges: Exclude<EdgeType, 'center'>[] = [];
-    for (const edge of exitEdges) {
+    // Use cell.edges (pre-computed at cell creation) instead of recomputing
+    // This ensures consistency with the edges the cell was classified with
+    for (const edge of cell.edges) {
+      if (edge === 'center') continue;
       const adjacentSideId = side.adjacent[edge];
       if (!this.state.sides[adjacentSideId].peeled) {
-        unpeeledEdges.push(edge);
+        return edge;
       }
     }
 
-    // No unpeeled adjacent sides from this cell
-    if (unpeeledEdges.length === 0) {
-      return null;
-    }
-
-    // If only one unpeeled edge, use it (no choice)
-    if (unpeeledEdges.length === 1) {
-      const edge = unpeeledEdges[0];
-      const adjacentSideId = side.adjacent[edge];
-      const isViable = this.isPathViable(side.id, adjacentSideId);
-      console.log(`Single exit edge ${edge} to side ${adjacentSideId}, viable: ${isViable}`);
-      return edge; // Return it regardless - if not viable, player loses eventually
-    }
-
-    // Multiple unpeeled edges - MUST choose one that allows completing the game
-    const viableEdges: Exclude<EdgeType, 'center'>[] = [];
-    for (const edge of unpeeledEdges) {
-      const adjacentSideId = side.adjacent[edge];
-      if (this.isPathViable(side.id, adjacentSideId)) {
-        viableEdges.push(edge);
-      }
-    }
-
-    // If we have viable edges, pick one (player survives)
-    if (viableEdges.length > 0) {
-      const chosen = viableEdges[0];
-      console.log(`Corner cell: choosing ${chosen} from ${viableEdges.length} viable paths (${unpeeledEdges.length} unpeeled edges)`);
-      return chosen;
-    }
-
-    // No viable paths exist from any of the cell's edges - pick first unpeeled
-    // This means player positioned themselves into an unwinnable state
-    console.log(`Corner cell: no viable paths from ${unpeeledEdges.length} unpeeled edges, game will be unwinnable`);
-    return unpeeledEdges[0];
+    return null;
   }
 
   private transitionToNextSide(edge: EdgeType): void {
@@ -1210,6 +1275,7 @@ export class Game {
 
     this.state.currentSide = nextSideId;
     this.lastPeeledCellId = null; // Reset for new side - first cell is free choice
+    this.meshCacheDirty = true; // Invalidate cache for new side
 
     // Note: gravity is updated after camera animation completes in animateCamera()
     this.startRotationAnimation(nextSideId, edge);
@@ -1322,9 +1388,8 @@ export class Game {
     this.peelStrip.setCamera(this.camera);
     this.peelStrip.setGravityFromCamera(this.camera);  // Set gravity based on initial camera
 
-    // Create new mandarin with difficulty based on streak
-    const cellsPerSide = this.getCellsPerSide();
-    const { sides, group, totalCells } = createMandarin(cellsPerSide);
+    // Create new mandarin
+    const { sides, group, totalCells } = createMandarin(this.CELLS_PER_SIDE);
     this.mandarinGroup = group;
     this.scene.add(group);
 
@@ -1350,11 +1415,15 @@ export class Game {
       totalCells,
     };
 
+    // Start recording gameplay
+    this.startRecording();
+
     // Reset camera
     this.camera.position.set(0, 0, 5.5);
     this.camera.lookAt(0, 0, 0);
     this.currentEntryAngle = 0; // Reset rotation mapping
     this.lastPeeledCellId = null; // Reset connectivity tracking
+    this.meshCacheDirty = true; // Reset mesh cache for new game
 
     // Reset tilt state
     this.currentTilt.identity();
@@ -1364,11 +1433,6 @@ export class Game {
     this.showScreen('playing');
     this.updateEdgeIndicators();
     this.updateStreakHUD();
-
-    // Update background emoji count based on streak
-    if (this.emojiBackground) {
-      this.emojiBackground.setLevel(this.streak);
-    }
   }
 
   private gameOver(reason: string): void {
@@ -1376,20 +1440,17 @@ export class Game {
     this.state.touchActive = false;
     this.hideEdgeIndicators();
     this.updateStreakHUD(); // Hide HUD
+    this.startShowcaseRotation(); // Start rotating mandarin to show peeling
+
+    // Stop recording (discard on game over)
+    if (this.recorder) {
+      this.recorder.cancel();
+      this.recorder = null;
+    }
 
     // Update stats
     this.totalTries++;
-    if (this.streak > this.bestStreak) {
-      this.bestStreak = this.streak;
-    }
-    const lostStreak = this.streak; // Save for display before reset
-    this.streak = 0;
     this.saveStats();
-
-    // Reset background to level 0
-    if (this.emojiBackground) {
-      this.emojiBackground.setLevel(0);
-    }
 
     const elapsed = ((Date.now() - this.state.startTime) / 1000).toFixed(1);
     const reasonEl = this.gameOverScreen.querySelector('#game-over-reason') as HTMLElement;
@@ -1398,11 +1459,7 @@ export class Game {
 
     reasonEl.textContent = reason;
     statsEl.textContent = i18n.formatPeeled(this.state.peeledCount, this.state.totalCells, elapsed);
-    if (lostStreak > 0) {
-      streakEl.textContent = `🔥 Lost streak of ${lostStreak}! Best: ${this.bestStreak}`;
-    } else {
-      streakEl.textContent = this.bestStreak > 0 ? `Best streak: ${this.bestStreak}` : '';
-    }
+    streakEl.textContent = '';
 
     this.showScreen('game_over');
   }
@@ -1412,19 +1469,17 @@ export class Game {
     this.state.touchActive = false;
     this.hideEdgeIndicators();
     this.updateStreakHUD(); // Hide HUD
+    this.startShowcaseRotation(); // Start rotating mandarin to show peeling
+
+    // Calculate elapsed time
+    const elapsedNum = (Date.now() - this.state.startTime) / 1000;
+    const elapsed = elapsedNum.toFixed(1);
+    this.lastWinTime = elapsed;
 
     // Update stats
     this.totalTries++;
     this.totalWins++;
-    this.streak++;
-    if (this.streak > this.bestStreak) {
-      this.bestStreak = this.streak;
-    }
     this.saveStats();
-
-    const elapsedNum = (Date.now() - this.state.startTime) / 1000;
-    const elapsed = elapsedNum.toFixed(1);
-    this.lastWinTime = elapsed;
 
     const statsEl = this.winScreen.querySelector('#win-stats') as HTMLElement;
     const streakEl = this.winScreen.querySelector('#win-streak') as HTMLElement;
@@ -1432,8 +1487,7 @@ export class Game {
     const shareBtn = this.winScreen.querySelector('#share-btn') as HTMLButtonElement;
 
     statsEl.textContent = i18n.formatTime(elapsed);
-    const nextCells = this.getCellsPerSide();
-    streakEl.textContent = `🔥 Streak: ${this.streak} | Next: ${nextCells} cells`;
+    streakEl.textContent = i18n.formatTotalPeeled(this.totalWins);
 
     // Show share button in Telegram or LINE
     if (shareBtn) {
@@ -1441,16 +1495,36 @@ export class Game {
       shareBtn.style.display = canShare ? 'block' : 'none';
     }
 
-    // Submit score to global leaderboard (Telegram or LINE)
-    // Use string IDs for both platforms
-    const userId = telegram.userId?.toString() ?? line.userId ?? null;
-    const userName = telegram.isAvailable ? telegram.userName : line.userName;
-    const platform: 'telegram' | 'line' = line.isInClient ? 'line' : 'telegram';
+    // Show download clip button with loading state while recording finalizes
+    const downloadClipBtn = this.winScreen.querySelector('#download-clip-btn') as HTMLButtonElement;
+    if (downloadClipBtn && this.recorder) {
+      downloadClipBtn.style.display = 'block';
+      downloadClipBtn.disabled = true;
+      downloadClipBtn.textContent = '⏳ Saving...';
 
-    console.log('[Score] Submitting:', { userId, userName, platform, time: elapsedNum });
+      // Delay stopping recording to capture final peel animation and juice burst
+      this.finalizeRecording().then(() => {
+        downloadClipBtn.disabled = false;
+        downloadClipBtn.textContent = '📹 Save Clip';
+      });
+    } else if (downloadClipBtn) {
+      downloadClipBtn.style.display = this.lastRecordedBlob ? 'block' : 'none';
+    }
 
-    if (userId && (telegram.isAvailable || line.isInClient)) {
-      const result = await submitScore(userId, userName, elapsedNum, platform);
+    // Submit score to global leaderboard (Telegram, LINE, or Web)
+    // Use string IDs for all platforms
+    const userId = telegram.userId?.toString() ?? line.userId ?? getAnonymousUserId();
+    const userName = telegram.isAvailable ? telegram.userName : (line.isInClient ? line.userName : getAnonymousUserName());
+    const platform: 'telegram' | 'line' | 'web' = line.isInClient ? 'line' : (telegram.isAvailable ? 'telegram' : 'web');
+
+    console.log('[Score] Submitting:', {
+      userId, userName, platform, time: elapsedNum, cellCount: this.CELLS_PER_SIDE
+    });
+
+    if (userId) {
+      const result = await submitScore(userId, userName, elapsedNum, platform, {
+        cellCount: this.CELLS_PER_SIDE,
+      });
       console.log('[Score] Result:', result);
       if (result && leaderboardEl) {
         let leaderboardText = '';
@@ -1483,6 +1557,7 @@ export class Game {
 
   private returnToTitle(): void {
     this.state.status = 'title';
+    this.stopShowcaseRotation();
     this.showScreen('title');
   }
 
@@ -1521,17 +1596,18 @@ export class Game {
     if (!this.lastWinTime) return;
 
     const timeSeconds = parseFloat(this.lastWinTime);
+    const cellsPerSide = this.CELLS_PER_SIDE;
 
     // Try LINE first (if in LINE app)
     if (line.isAvailable && line.isInClient) {
-      const result = await line.shareResult(timeSeconds);
+      const result = await line.shareResult(timeSeconds, cellsPerSide);
       if (result.status === 'success') {
         this.returnToTitle();
         return;
       }
     }
 
-    // Fall back to Telegram
+    // Use simple share method (inline query requires bot support)
     if (telegram.isAvailable) {
       const shareText = i18n.formatShareText(this.lastWinTime);
       telegram.shareApp(shareText);
@@ -1539,11 +1615,72 @@ export class Game {
     }
   }
 
+  // ============================================================================
+  // Video Recording
+  // ============================================================================
+
+  private startRecording(): void {
+    if (!GAME_SETTINGS.enableClipRecording) return;
+
+    // Cancel any previous recording
+    this.recorder?.cancel();
+
+    if (!GameRecorder.isSupported()) {
+      console.log('[Game] Recording not supported in this browser');
+      return;
+    }
+
+    this.recorder = new GameRecorder(this.renderer.domElement);
+    this.recorder.start();
+  }
+
+  private async stopRecording(): Promise<Blob | null> {
+    if (!this.recorder) {
+      return null;
+    }
+
+    const blob = await this.recorder.stop();
+    this.lastRecordedBlob = blob;
+    this.recorder = null;
+
+    return blob;
+  }
+
+  // Finalize recording with delay to capture final animations
+  private async finalizeRecording(): Promise<void> {
+    // Wait for peel strip to complete orbit around mandarin (~3 seconds for full circle)
+    await new Promise(resolve => setTimeout(resolve, 4000));
+    await this.stopRecording();
+  }
+
+  // Get the last recorded video blob (for sharing)
+  getLastRecordedBlob(): Blob | null {
+    return this.lastRecordedBlob;
+  }
+
+  // Download the last recorded clip
+  downloadLastClip(): void {
+    if (this.lastRecordedBlob) {
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
+      GameRecorder.downloadBlob(this.lastRecordedBlob, `mandarin-${timestamp}.webm`);
+    }
+  }
+
   private handleResize(): void {
+    // Debounce resize to avoid geometry thrashing
+    if (this.resizeTimeout) {
+      clearTimeout(this.resizeTimeout);
+    }
+
+    // Update camera and renderer immediately for smooth resizing
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.updateEdgeIndicatorPositions();
+
+    // Debounce geometry recreation (expensive operation)
+    this.resizeTimeout = setTimeout(() => {
+      this.updateEdgeIndicatorPositions();
+    }, 100);
   }
 
   start(): void {
@@ -1559,6 +1696,7 @@ export class Game {
       this.updateTilt();
       this.updateJuiceParticles(deltaTime);
       this.updateStemFalling(deltaTime);
+      this.updateShowcaseRotation(deltaTime);
       this.peelStrip?.update(deltaTime);
       this.positionEdgeIndicatorsToCamera();
       this.renderer.render(this.scene, this.camera);

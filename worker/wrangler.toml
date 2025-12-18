@@ -1,0 +1,8 @@
+name = "mandarin-leaderboard"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mandarin-leaderboard"
+database_id = "e07be0d1-2075-47ef-bee0-a65d2b076630"

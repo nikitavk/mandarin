@@ -2,6 +2,7 @@
 // Documentation: https://developers.line.biz/en/docs/liff/
 
 import liff from '@line/liff';
+import { i18n } from './i18n';
 
 export interface LineProfile {
   userId: string;
@@ -111,7 +112,7 @@ class LineManager {
   }
 
   // Share game result to LINE friends/groups
-  async shareResult(timeSeconds: number): Promise<LineShareResult> {
+  async shareResult(timeSeconds: number, _cellsPerSide?: number): Promise<LineShareResult> {
     if (!this._isInitialized) {
       console.warn('[LINE] Share failed: not initialized');
       return { status: 'cancelled' };
@@ -127,7 +128,8 @@ class LineManager {
     }
 
     // Simple text message (works more reliably than Flex)
-    const shareText = `🍊 ส้ม - Mandarin Game 🍊\n\nฉันปอกส้มได้ใน ${timeSeconds.toFixed(1)} วินาที!\nคุณทำได้เร็วกว่านี้ไหม?\n\n▶️ เล่นเลย: https://liff.line.me/${this.LIFF_ID}`;
+    // Use translated share text based on user's language
+    const shareText = `🍊 ${i18n.title} 🍊\n\n${i18n.formatShareText(timeSeconds.toFixed(1))}\n\n▶️ https://liff.line.me/${this.LIFF_ID}`;
 
     try {
       console.log('[LINE] Opening shareTargetPicker...');

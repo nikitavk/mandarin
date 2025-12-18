@@ -1,58 +1,104 @@
-# Mandarin Peeling Game - Design Document
+# Mandarin Peeling Game - Technical Documentation
 
-## Theme
-**Christmas / New Year seasonal game.** Mandarins are a traditional holiday symbol in many cultures - associated with Christmas stockings, New Year celebrations, and winter festivities. The game captures the cozy, satisfying ritual of peeling a mandarin during the holiday season.
+## Overview
 
-## Concept
-A single-screen casual game where the player peels a mandarin by swiping across its surface. The mandarin is divided into 6 sides (cube-mapped sphere), each containing Voronoi-pattern peel pieces. The player must peel all pieces in one continuous touch - lifting the finger ends the game.
+A Christmas/New Year themed casual web game where players peel a mandarin by swiping across its surface in one continuous touch. Built with Three.js and TypeScript, deployed as a Telegram Mini App and LINE Mini App.
 
-## Core Loop
-1. Game starts with finger down on first piece
-2. Drag across pieces to peel them
-3. Peel all pieces on current side
-4. Last piece touched determines next side (based on edge location)
-5. Camera rotates to next side automatically
-6. Repeat until all 6 sides peeled → WIN
-7. Lift finger at any point → GAME OVER
+**Live:** Deployed via GitHub Pages
 
 ---
 
-## Mechanics
+## Architecture
 
-### Touch System
-- Single continuous touch required for entire game
-- Touch position mapped to current side's surface
-- Piece peels when touch enters its area
-- No multi-touch
-- Start anywhere on first side (no designated starting zone)
+### File Structure
 
-### Voronoi Cells
-- Each side divided into 5-8 Voronoi cells
-- Cells generated procedurally per session
-- Each cell has an edge classification: `top | bottom | left | right | center`
-- Edge cells determine rotation direction when side is complete
-- **Center cell rule**: If last peeled cell is `center` (not on edge) → GAME OVER
+```
+src/
+  main.ts           # Entry point, initializes after LINE SDK loads
+  game.ts           # Main Game class (~1500 lines), orchestrates everything
+  types.ts          # TypeScript type definitions
+  mandarin.ts       # Creates 3D mandarin geometry with Voronoi cells
+  voronoi.ts        # Voronoi cell generation (~700 lines)
+  peelStrip.ts      # Physics-based animated peel strip (~640 lines)
+  input.ts          # Touch/mouse input handling with optimizations
+  textures.ts       # Procedural texture generation (FBM, cellular noise)
+  christmasEmoji.ts # CSS-animated falling emoji background
+  telegram.ts       # Telegram Mini App integration
+  line.ts           # LINE Mini App integration
+  i18n.ts           # Internationalization (5+ languages)
+```
 
-### Side Transitions
-- Triggered when all cells on current side are peeled
-- Direction based on last peeled cell's edge position
-- Smooth rotation animation (~0.3s)
+### Tech Stack
 
-#### Entry Edge Alignment
-When transitioning to a new side, the camera rotation must account for where the player's finger currently is on screen. The new side should be oriented so the player can continue peeling seamlessly from their current finger position.
+- **Three.js 0.182.0** - 3D rendering
+- **TypeScript 5.9.3** - Strict mode with `noUnusedLocals`/`noUnusedParameters`
+- **Vite 7.2.7** - Build tool with manual Three.js chunking
+- **@line/liff** - LINE Mini App SDK
 
-**The rule:** The entry edge (opposite of exit edge) should appear where the finger is.
+---
 
-| Exit Edge | Finger Position | New Side Orientation |
-|-----------|-----------------|---------------------|
-| top       | top of screen   | rotated 180° (bottom edge at top) |
-| bottom    | bottom of screen| rotated 180° (top edge at bottom) |
-| left      | left of screen  | rotated -90° (right edge at left) |
-| right     | right of screen | rotated +90° (left edge at right) |
+## Core Game Mechanics
 
-This is applied as an additional Z-axis rotation on top of the base side-facing rotation.
+### Game Flow
+
+```
+TITLE → PLAYING → GAME_OVER | WIN → TITLE
+```
+
+1. Game starts with finger down on first piece
+2. Drag across pieces to peel them (cells must be neighbors)
+3. Peel all cells on current side
+4. Last cell's edge determines next side transition
+5. Camera rotates to next side (300ms, ease-out)
+6. Repeat until all 6 sides peeled → WIN
+7. Lift finger at any point → GAME OVER
+
+### Key Rules
+
+- **Single continuous touch** required for entire game
+- **Cell connectivity**: Can only peel cells adjacent to the last peeled cell
+- **Edge cells**: Determine rotation direction when side is complete
+- **Center cell rule**: Ending on a center cell → GAME OVER
+- **Path validation**: DFS validates that remaining sides can be completed
+
+### Data Types
+
+```typescript
+type EdgeType = 'top' | 'bottom' | 'left' | 'right' | 'center';
+
+interface PeelCell {
+  id: number;
+  sideId: number;
+  vertices: THREE.Vector2[];    // Voronoi polygon points (2D UV)
+  center: THREE.Vector2;        // Cell center
+  mesh: THREE.Mesh;
+  peeled: boolean;
+  edge: EdgeType;               // Primary edge classification
+  edges: EdgeType[];            // All edges cell touches (corners touch 2)
+  neighborIds: number[];        // Adjacent cell IDs for connectivity
+}
+
+interface MandarinSide {
+  id: number;                   // 0-5 (FRONT, BACK, TOP, BOTTOM, LEFT, RIGHT)
+  cells: PeelCell[];
+  peeled: boolean;
+  adjacent: { top, bottom, left, right: number };
+}
+
+interface GameState {
+  status: 'title' | 'playing' | 'game_over' | 'win';
+  currentSide: number;
+  sides: MandarinSide[];
+  touchActive: boolean;
+  startTime: number;
+  lastPeeledEdge: EdgeType | null;
+  peeledCount: number;
+  totalCells: number;
+}
+```
 
 ### Side Adjacency Map
+
 ```
         [2: TOP]
 [4: LEFT][0: FRONT][5: RIGHT][1: BACK]
@@ -70,188 +116,324 @@ This is applied as an additional Z-axis rotation on top of the base side-facing 
 
 ---
 
-## Visual Design
+## Voronoi Cell Generation
 
-### Phase 1: Flat/Prototype
-- Solid orange color for peel
-- Lighter orange for peeled (exposed fruit)
-- No outlines - cells distinguished by subtle color variation or gaps
-- Simple camera: orthographic, centered on current side
-- **Edge hints**: Light glows through edges leading to unpeeled sides
-  - Warm light visible at valid exit edges (like light peeking through cracks)
-  - Dead ends (already-peeled sides) appear dark/sealed - no light
-  - Creates natural visual hierarchy: "go towards the light"
-  - Light intensity could pulse subtly to draw attention
+**File:** `src/voronoi.ts`
 
-### Phase 2: Polished (Future)
-- Realistic mandarin texture
-- **Continuous peel strip**: As player peels cells, a single connected ribbon forms
-  - Each peeled cell adds to the strip length
-  - Strip attached at first peeled cell, dangles with physics
-  - Soft body / rope physics (verlet integration or cannon.js)
-  - Curls naturally under 
-  - Persists across side transitions (ribbon wraps around mandarin)
-  - **Visibility handling**: Strip fades to semi-transparent when near active side, or auto-tucks behind mandarin to avoid obscuring gameplay
-  - **Score metric**: Strip length tracked as secondary score ("Longest Peel" leaderboard)
-- Juice particle effects
-- Ambient occlusion on cell edges
+### Site Placement Strategy
 
-### UI Elements
-- Sides remaining indicator (6 dots or mandarin icon)
-- Timer (optional: for scoring)
-- "Game Over" overlay
-- "You Win" overlay with stats
+For playability, sites are placed strategically:
 
----
-
-## Game States
-
-```
-TITLE
-  ↓ (tap to start)
-PLAYING
-  ↓ (finger lifted)     ↓ (all sides peeled)
-GAME_OVER               WIN
-  ↓ (tap)               ↓ (tap)
-TITLE                   TITLE
-```
-
----
-
-## Data Structures
+1. **Low counts (1-3)**: Strategic placement toward edges
+2. **Higher counts (4+)**: Guaranteed edge sites + random fill with minimum distance constraints
 
 ```typescript
-type EdgeType = 'top' | 'bottom' | 'left' | 'right' | 'center';
+// Pre-compute squared distance to avoid sqrt in hot loop
+const minDistSq = minDist * minDist;
 
-interface PeelCell {
-  id: number;
-  vertices: THREE.Vector2[];    // Voronoi polygon points
-  center: THREE.Vector2;        // Cell center
-  mesh: THREE.Mesh;
-  peeled: boolean;
-  edge: EdgeType;
+for (let i = sites.length; i < count; i++) {
+  // Random placement with distance validation
+  for (const site of sites) {
+    const dx = x - site.x;
+    const dy = y - site.y;
+    if (dx * dx + dy * dy < minDistSq) {  // Squared comparison
+      valid = false;
+      break;
+    }
+  }
 }
+```
 
-interface MandarinSide {
-  id: number;                   // 0-5
-  cells: PeelCell[];
-  peeled: boolean;              // All cells peeled
-  adjacent: {
-    top: number;
-    bottom: number;
-    left: number;
-    right: number;
-  };
-}
+### Cell Classification
 
-interface GameState {
-  status: 'title' | 'playing' | 'game_over' | 'win';
-  currentSide: number;
-  sides: MandarinSide[];
-  touchActive: boolean;
-  startTime: number;
-  lastPeeledEdge: EdgeType | null;
+Cells are classified by which boundary edges their polygon touches:
+- Edge cells: touch exactly one boundary → valid exit
+- Corner cells: touch two boundaries → can exit either direction
+- Center cells: touch no boundaries → game over if last
+
+### Neighbor Computation
+
+Neighbors are determined by shared polygon edges (cells share ≥2 vertices within tolerance).
+
+---
+
+## Peel Strip Physics
+
+**File:** `src/peelStrip.ts`
+
+### Architecture
+
+Single continuous mesh using `BufferGeometry` with:
+- Pre-allocated `Float32Array` for positions (500 vertices max)
+- Pre-allocated `Uint16Array` for triangle indices (2000 max)
+- Dynamic draw range that grows as cells are added
+
+### Connection Strategy
+
+Each cell connects to the **previous cell only** via 2 adjacent vertices (shared edge):
+
+1. Find all potential matches within `MATCH_TOLERANCE = 0.15`
+2. Select adjacent vertex pair (forms actual polygon edge)
+3. Reuse matched vertices from previous cell
+4. If no natural match, force connection to closest vertex
+
+### Verlet Integration Physics
+
+```typescript
+update(deltaTime: number): void {
+  // Move pinned vertices to cursor position
+  for (const idx of this.pinnedIndices) {
+    pv.position.copy(this.cursorPosition);
+  }
+
+  // Verlet integration for unpinned vertices
+  for (const pv of physicsVertices) {
+    if (pv.pinned) continue;
+
+    // Reuse temp vectors to avoid allocations
+    this.tempVelocity.copy(pv.position).sub(pv.previousPosition);
+    pv.position.add(this.tempVelocity.multiplyScalar(damping));
+    this.tempVec1.copy(this.gravity).multiplyScalar(dt * dt);
+    pv.position.add(this.tempVec1);
+  }
+
+  // Solve distance constraints (1 iteration for mobile performance)
+  this.solveConstraints();
+  this.syncGeometryFromPhysics();
 }
+```
+
+### Pinning Strategy
+
+- **First cell**: Pin first 2 vertices (one edge)
+- **Subsequent cells**: Unpin all, then pin only matched vertices
+- **Effect**: Newest connection follows cursor, everything else dangles
+
+### Camera-Relative Gravity
+
+```typescript
+setGravityFromCamera(camera: THREE.Camera): void {
+  const down = new THREE.Vector3(0, -1, 0);
+  down.applyQuaternion(camera.quaternion);
+  const towardsPlayer = new THREE.Vector3(0, 0, -1);
+  towardsPlayer.applyQuaternion(camera.quaternion);
+
+  // Mix: 70% down, 30% towards player
+  this.gravity.addScaledVector(down, 0.7);
+  this.gravity.addScaledVector(towardsPlayer, 0.3);
+  this.gravity.normalize().multiplyScalar(20.0);
+}
+```
+
+### Victory Orbit Animation
+
+On win, the peel strip enters orbit mode - floating around the mandarin with tumbling effect.
+
+---
+
+## Input System
+
+**File:** `src/input.ts`
+
+### Optimizations Implemented
+
+1. **Cached `getBoundingClientRect()`**: Avoids layout reflow on every touch event
+   ```typescript
+   private cachedRect: DOMRect | null = null;
+
+   private getRect(): DOMRect {
+     if (!this.cachedRect) {
+       this.cachedRect = this.canvas.getBoundingClientRect();
+     }
+     return this.cachedRect;
+   }
+   ```
+
+2. **Pre-bound event handlers**: Proper listener removal
+   ```typescript
+   // Bind once in constructor
+   this.boundHandleDown = this.handleDown.bind(this);
+
+   // Use same reference for add/remove
+   canvas.addEventListener('mousedown', this.boundHandleDown);
+   canvas.removeEventListener('mousedown', this.boundHandleDown);
+   ```
+
+---
+
+## Rendering & Performance
+
+### WebGL Configuration
+
+```typescript
+this.renderer = new THREE.WebGLRenderer({
+  antialias: window.devicePixelRatio < 2,  // Disable AA on high-DPI
+  alpha: true,
+  powerPreference: 'high-performance',
+});
+
+// Cap pixel ratio for mobile performance
+const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+this.renderer.setPixelRatio(isMobile ? 1.0 : Math.min(devicePixelRatio, 1.5));
+```
+
+### Lighting Setup
+
+Strategic lighting to highlight cell edges for path planning:
+
+```typescript
+// Low ambient for more contrast between cells
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+
+// Strong side light to create shadows between cells
+// Attached to camera so lighting is consistent across rotations
+const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+directionalLight.position.set(2, 1, 0.5);  // More from the side
+this.camera.add(directionalLight);
+
+// Subtle fill light to prevent harsh shadows
+const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
+directionalLight2.position.set(-1, -0.5, 1);
+this.camera.add(directionalLight2);
+```
+
+- **Side lighting** creates visible shadows at cell boundaries
+- **Camera-attached lights** maintain consistent lighting as mandarin rotates
+- **Low ambient + strong directional** increases contrast for edge visibility
+- Helps players see cell shapes and plan their peeling path
+
+### Performance Optimizations
+
+1. **Reusable objects** to avoid GC pressure:
+   ```typescript
+   private tempEuler = new THREE.Euler();
+   private tempQuat = new THREE.Quaternion();
+   private tempVec3 = new THREE.Vector3();
+   ```
+
+2. **Debounced resize handler** (100ms) to avoid geometry thrashing
+
+3. **Cached unpeeled meshes** for raycasting:
+   ```typescript
+   if (this.meshCacheDirty) {
+     this.unpeeledMeshCache = currentSide.cells
+       .filter(c => !c.peeled)
+       .map(c => c.mesh);
+     this.meshCacheDirty = false;
+   }
+   ```
+
+4. **Conditional normal computation** - only when topology changes:
+   ```typescript
+   if (this.needsNormalUpdate) {
+     this.geometry.computeVertexNormals();
+     this.needsNormalUpdate = false;
+   }
+   ```
+
+5. **Shared materials** for juice particles (victory particles use cloned materials for color variation)
+
+6. **Proper geometry disposal** to prevent memory leaks
+
+### Particle System
+
+- Regular juice: 4-6 particles per cell, shared material
+- Victory burst: 40-60 particles with individual geometries (disposed on death)
+
+---
+
+## Visual Design
+
+### Textures (Procedural)
+
+**File:** `src/textures.ts`
+
+- **Peel texture**: Fractal Brownian Motion (FBM) for organic orange pattern
+- **Peel normal map**: Computed from height map with cellular noise for pores
+- **Body texture**: Lighter orange for exposed fruit flesh
+- **Caching**: Textures created once and reused
+
+### Edge Indicators
+
+Screen-edge bars that show valid exit directions:
+- Orange bars at screen edges for unpeeled adjacent sides
+- Path validation: only shows exits that lead to completable game states
+- Brief blink animation on side transition
+
+### Camera Tilt Effect
+
+Subtle tilt towards touch position during gameplay:
+```typescript
+const tiltX = -normalizedPosition.y * 0.08;  // ~4.5 degrees max
+const tiltY = normalizedPosition.x * 0.08;
+this.currentTilt.slerp(this.targetTilt, 0.12);
+```
+
+### Stem Falling
+
+When TOP side is peeled, the stem detaches with physics:
+- Initial upward pop
+- Gravity + tumbling rotation
+- Removed when fallen off screen
+
+---
+
+## Platform Integration
+
+### Telegram Mini App
+
+```typescript
+// telegram.ts
+- User authentication (no login needed)
+- Haptic feedback
+- Native share via inline query with image
+- CloudStorage for progress
+- Stars payment for donations
+- Leaderboard API
+```
+
+### LINE Mini App
+
+```typescript
+// line.ts
+- LIFF SDK initialization
+- User profile access
+- Share via LINE message
+- Separate leaderboard
+```
+
+### Leaderboard API
+
+Backend on Cloudflare Workers (`worker/` directory):
+- Time-based global leaderboard
+- Platform-specific filtering (Telegram/LINE/Web)
+- Cell count variants support
+
+---
+
+## Game Configuration
+
+```typescript
+const CELLS_PER_SIDE = 5;           // Fixed for current mode
+const ROTATION_DURATION = 300;       // ms for side transition
+const MATCH_TOLERANCE = 0.15;        // Vertex matching distance
+const ROUNDNESS = 0.9;               // Cube-to-sphere blend
+const RADIUS = 1.0;                  // Mandarin radius
 ```
 
 ---
 
-## Technical Implementation
+## Future Considerations
 
-### Voronoi Generation
-- Use library: `d3-delaunay` or custom implementation
-- Generate N random points within square bounds (N = TBD, needs playtesting)
-- Clip polygons to side boundaries
-- Classify edge cells by checking if polygon touches boundary
+### Roguelike Mode (Planned)
 
-### Coordinate Mapping
-- Each side uses local 2D coordinates (-1 to 1)
-- Touch screen position → raycaster → local UV
-- Camera always faces current side (rotation around mandarin center)
+Debuffs applied after each side:
+- Fog of War, Sticky Fingers, Shrinking Cells
+- Mirrored Controls, Blindfold, Slippery
+- Progressive difficulty: 0 → 1 → 2 → 3 debuffs
 
-### Rotation Animation
-- Use quaternion slerp for smooth rotation
-- Duration: 300ms
-- Easing: ease-out
+### Monetization
 
----
-
-## Scope
-
-### MVP (Phase 1)
-- [ ] 6-sided mandarin with Voronoi cells
-- [ ] Touch/mouse input tracking
-- [ ] Peel detection and visual feedback
-- [ ] Side rotation on completion
-- [ ] Win/lose conditions
-- [ ] Basic UI (game over, win)
-
-### Polish (Phase 2)
-- [ ] Procedural Voronoi per session
-- [ ] Sound effects (peel, rotate, win, lose)
-- [ ] Improved visuals (textures, particles)
-- [ ] Score system (time-based)
-- [ ] Haptic feedback (mobile)
-
-### Stretch Goals
-- [ ] Multiple mandarin types (different cell counts)
-- [ ] Daily challenge mode
-- [ ] Leaderboard
-
-### Roguelike Mode (Future)
-After each side peeled, a random debuff is applied:
-
-**Debuff Examples:**
-- **Fog of War** - cells only revealed when finger is near
-- **Sticky Fingers** - must hold on cell for 0.5s to peel it
-- **Shrinking Cells** - cells slowly shrink, disappear if not peeled in time
-- **Mirrored Controls** - touch position inverted
-- **Blindfold** - screen goes dark for 1s intervals
-- **Slippery** - finger "slides" in movement direction
-- **Decoy Cells** - fake cells that trigger game over if touched
-- **Time Pressure** - side must be completed within time limit
-- **Fragile Edges** - edge cells crack and break if touched twice
-- **Rotating View** - camera slowly rotates during play
-
-**Progression:**
-- Side 1: No debuff
-- Side 2-3: 1 random debuff
-- Side 4-5: 2 stacked debuffs
-- Side 6: 3 stacked debuffs (final challenge)
-
-**Meta progression:**
-- Unlock new debuffs as you play
-- "Seeded runs" for daily challenges
-- Debuff difficulty tiers (easy/medium/hard)
-
----
-
-## Platform
-
-### Telegram Mini App Integration
-- Deploy as Telegram Mini App (WebApp)
-- Use Telegram WebApp SDK for:
-  - User authentication (no login needed)
-  - Haptic feedback (`HapticFeedback.impactOccurred`)
-  - Native share functionality
-  - CloudStorage for saving progress
-  - Leaderboard via Telegram Gaming Platform
-- Responsive design for mobile-first experience
-- Back button handling
-- Theme adaptation (dark/light from Telegram)
-
-### Monetization (Telegram)
-- **Telegram Stars** - in-app currency for purchases
-  - Extra lives / continues
-  - Cosmetic fruit skins (blood orange, lemon, grapefruit, Christmas ornament, snowball)
-  - Skip difficult levels
-- **Ads via Telegram Ad Network**
-  - Rewarded ads: watch ad → get continue
-  - Interstitial between sessions (optional, not aggressive)
-- **Premium features**
-  - Ad-free experience
-  - Exclusive skins
-  - Early access to new content
-- **Invite rewards**
-  - Bonus Stars for inviting friends
-  - Referral tracking via `startParam`
+- Telegram Stars for donations
+- Cosmetic skins (blood orange, lemon, Christmas ornament)
+- Ad-free premium option
