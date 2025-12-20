@@ -754,6 +754,11 @@ export class Game {
       height: 100%;
       pointer-events: none;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
+      user-select: none;
     `;
     document.body.appendChild(container);
     return container;
