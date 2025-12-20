@@ -14,7 +14,7 @@ import { InputManager, InputState } from './input';
 import { PeelStrip } from './peelStrip';
 import { GameRecorder } from './recorder';
 import { i18n } from './i18n';
-import { yandex, submitScore, getLeaderboard, getAnonymousUserId, getAnonymousUserName } from './yandex';
+import { yandex } from './yandex';
 
 // Game settings (code-level configuration)
 const GAME_SETTINGS = {
@@ -784,7 +784,6 @@ export class Game {
     `;
     screen.innerHTML = `
       <h1 style="font-size: 3rem; margin-bottom: 0.5rem; color: #ff8833;">${i18n.title}</h1>
-      <a id="author-link" href="https://t.me/nikita_kv" target="_blank" style="font-size: 0.9rem; color: #88aa88; text-decoration: none; margin-bottom: 1rem; display: block;">by @nikita_kv</a>
       <p style="font-size: 1.2rem; color: #ffcc88; margin-bottom: 1.5rem;">${i18n.subtitle}</p>
       <div id="title-leaderboard" style="margin-bottom: 1.5rem; display: none;">
         <h3 style="font-size: 1rem; color: #ffdd44; margin-bottom: 0.5rem;">${i18n.leaderboard} (${i18n.formatCellsCount(this.CELLS_PER_SIDE)})</h3>
@@ -864,12 +863,6 @@ export class Game {
       donateContainer.style.display = 'none';
     }
 
-    // Update author link for Yandex
-    const authorLink = screen.querySelector('#author-link') as HTMLAnchorElement;
-    if (authorLink) {
-      authorLink.href = 'https://t.me/nikita_kv';
-      authorLink.textContent = 'by @nikita_kv';
-    }
 
     // Debug: log platform detection
     console.log('[Platform]', {
@@ -1012,8 +1005,19 @@ export class Game {
     this.gameOverScreen.style.display = screen === 'game_over' ? 'flex' : 'none';
     this.winScreen.style.display = screen === 'win' ? 'flex' : 'none';
 
-    // Update title screen stats when shown
+    // Update title screen when shown
     if (screen === 'title') {
+      // Update all translatable text
+      const titleEl = this.titleScreen.querySelector('h1') as HTMLElement;
+      const subtitleEl = this.titleScreen.querySelector('p') as HTMLElement;
+      const leaderboardTitle = this.titleScreen.querySelector('#title-leaderboard h3') as HTMLElement;
+      const tapToStartEl = this.titleScreen.querySelectorAll('p')[2] as HTMLElement;
+
+      if (titleEl) titleEl.textContent = i18n.title;
+      if (subtitleEl) subtitleEl.textContent = i18n.subtitle;
+      if (leaderboardTitle) leaderboardTitle.textContent = `${i18n.leaderboard} (${i18n.formatCellsCount(this.CELLS_PER_SIDE)})`;
+      if (tapToStartEl) tapToStartEl.textContent = i18n.tapToStart;
+
       const statsEl = this.titleScreen.querySelector('#title-stats') as HTMLElement;
       if (this.totalWins > 0) {
         statsEl.textContent = i18n.formatTotalPeeled(this.totalWins);
@@ -1034,31 +1038,24 @@ export class Game {
     // Hide tabs - no tabs needed
     tabsContainer.style.display = 'none';
 
-    // Show Yandex leaderboard
-    const platformToShow: 'telegram' | 'line' | 'web' | 'yandex' = 'yandex';
+    // Use native Yandex leaderboard
+    console.log('[Leaderboard] Fetching from Yandex SDK');
+    const entries = await yandex.getYandexLeaderboard();
+    console.log('[Leaderboard] Response:', entries);
 
-    // Fetch leaderboard for this platform
-    const data = await getLeaderboard(10, platformToShow, { cellCount: this.CELLS_PER_SIDE });
-
-    if (!data || data.leaderboard.length === 0) {
-      table.innerHTML = '<tr><td style="color: #666; padding: 0.5rem;">No scores yet</td></tr>';
+    if (entries.length === 0) {
+      table.innerHTML = `<tr><td style="color: #666; padding: 0.5rem;">${i18n.noScoresYet}</td></tr>`;
       container.style.display = 'block';
       return;
     }
 
-    // Build table rows - use string comparison for user ID
-    const currentUserId = yandex.userId ?? getAnonymousUserId();
-
     // Time leaderboard: show rank, name, time
-    table.innerHTML = data.leaderboard.map((entry) => {
-      const isCurrentUser = currentUserId === entry.odaUserId;
-      const rowStyle = isCurrentUser ? 'background: rgba(255, 221, 68, 0.2);' : '';
-      const nameStyle = isCurrentUser ? 'color: #ffdd44; font-weight: bold;' : 'color: #cccccc;';
+    table.innerHTML = entries.map((entry) => {
       return `
-        <tr style="${rowStyle}">
+        <tr>
           <td style="padding: 0.15rem 0.3rem; color: #ffaa66;">#${entry.rank}</td>
-          <td style="padding: 0.15rem 0.3rem; ${nameStyle} max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${this.escapeHtml(entry.odaName)}</td>
-          <td style="padding: 0.15rem 0.3rem; color: #88cc88;">${entry.time.toFixed(2)}s</td>
+          <td style="padding: 0.15rem 0.3rem; color: #cccccc; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${this.escapeHtml(entry.name)}</td>
+          <td style="padding: 0.15rem 0.3rem; color: #88cc88;">${(entry.timeMs / 1000).toFixed(2)}s</td>
         </tr>
       `;
     }).join('');
@@ -1478,35 +1475,13 @@ export class Game {
       downloadClipBtn.style.display = this.lastRecordedBlob ? 'block' : 'none';
     }
 
-    // Submit score to global leaderboard (Yandex)
-    const userId = yandex.userId ?? getAnonymousUserId();
-    const userName = yandex.isAvailable ? yandex.userName : getAnonymousUserName();
-    const platform: 'telegram' | 'line' | 'web' | 'yandex' = 'yandex';
+    // Submit score to Yandex leaderboard
+    const elapsedMs = Math.round(elapsedNum * 1000);
+    console.log('[Score] Submitting to Yandex:', { timeMs: elapsedMs });
+    await yandex.submitToYandexLeaderboard(elapsedMs);
 
-    console.log('[Score] Submitting:', {
-      userId, userName, platform, time: elapsedNum, cellCount: this.CELLS_PER_SIDE
-    });
-
-    if (userId) {
-      const result = await submitScore(userId, userName, elapsedNum, platform, {
-        cellCount: this.CELLS_PER_SIDE,
-      });
-      console.log('[Score] Result:', result);
-      if (result && leaderboardEl) {
-        let leaderboardText = '';
-        if (result.bestTime !== null && result.bestTime === elapsedNum) {
-          leaderboardText += `${i18n.newRecord} `;
-        }
-        if (result.bestTime !== null) {
-          leaderboardText += i18n.formatBestTime(result.bestTime.toFixed(1));
-        }
-        if (result.rank !== null) {
-          leaderboardText += ` | ${i18n.formatRank(result.rank)}`;
-        }
-        leaderboardEl.textContent = leaderboardText;
-        leaderboardEl.style.display = 'block';
-      }
-    } else if (leaderboardEl) {
+    // Hide leaderboard info on win screen (shown on title screen instead)
+    if (leaderboardEl) {
       leaderboardEl.style.display = 'none';
     }
 
@@ -1602,6 +1577,11 @@ export class Game {
     this.resizeTimeout = setTimeout(() => {
       this.updateEdgeIndicatorPositions();
     }, 100);
+  }
+
+  // Refresh UI after language change
+  refreshUI(): void {
+    this.showScreen(this.state.status);
   }
 
   start(): void {

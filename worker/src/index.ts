@@ -149,7 +149,7 @@ export default {
         let query: string;
         const params: (string | number)[] = [];
 
-        const validPlatforms = ['telegram', 'line', 'web'];
+        const validPlatforms = ['telegram', 'line', 'web', 'yandex'];
         const hasPlatformFilter = platformFilter && validPlatforms.includes(platformFilter);
 
         if (sortBy === 'streak') {

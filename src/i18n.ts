@@ -61,10 +61,13 @@ export interface Translations {
 
   // Cells count
   cellsCount: string; // "{count} cells"
+
+  // Leaderboard empty state
+  noScoresYet: string;
 }
 
 const en: Translations = {
-  title: 'MANDARIN',
+  title: 'Mandarin',
   subtitle: 'Peel the mandarin in one touch',
   tapToStart: 'Tap to start',
 
@@ -95,7 +98,7 @@ const en: Translations = {
     right: 'Right',
   },
 
-  pageTitle: 'MANDARIN',
+  pageTitle: 'Mandarin',
 
   leaderboard: 'Leaderboard',
   bestTime: 'Best: {time}s',
@@ -110,10 +113,12 @@ const en: Translations = {
   totalPeeled: 'Total mandarins peeled: {count}',
 
   cellsCount: '{count} cells',
+
+  noScoresYet: 'No scores yet',
 };
 
 const ru: Translations = {
-  title: 'МАНДАРИН',
+  title: 'Мандарин',
   subtitle: 'Очисти мандарин одним касанием',
   tapToStart: 'Нажми, чтобы начать',
 
@@ -144,7 +149,7 @@ const ru: Translations = {
     right: 'Правая',
   },
 
-  pageTitle: 'МАНДАРИН',
+  pageTitle: 'Мандарин',
 
   leaderboard: 'Таблица лидеров',
   bestTime: 'Лучшее: {time}с',
@@ -159,6 +164,8 @@ const ru: Translations = {
   totalPeeled: 'Всего мандаринов очищено: {count}',
 
   cellsCount: '{count} долек',
+
+  noScoresYet: 'Пока нет результатов',
 };
 
 const ko: Translations = {
@@ -208,6 +215,8 @@ const ko: Translations = {
   totalPeeled: '총 껍질 벗긴 귤: {count}개',
 
   cellsCount: '{count}조각',
+
+  noScoresYet: '아직 점수가 없습니다',
 };
 
 const ja: Translations = {
@@ -257,6 +266,8 @@ const ja: Translations = {
   totalPeeled: 'むいたみかんの合計: {count}個',
 
   cellsCount: '{count}片',
+
+  noScoresYet: 'まだスコアがありません',
 };
 
 const th: Translations = {
@@ -306,11 +317,13 @@ const th: Translations = {
   totalPeeled: 'ปอกส้มไปแล้วทั้งหมด: {count} ลูก',
 
   cellsCount: '{count} ชิ้น',
+
+  noScoresYet: 'ยังไม่มีคะแนน',
 };
 
 const translations: Record<Language, Translations> = { en, ru, ko, ja, th };
 
-// Detect language from browser/system settings
+// Detect language - will be set from Yandex SDK or browser
 function detectLanguage(): Language {
   // Check localStorage for user preference first
   try {
@@ -322,16 +335,28 @@ function detectLanguage(): Language {
     // Ignore localStorage errors
   }
 
-  // Get browser language
+  // Get browser language as fallback
   const browserLang = navigator.language || (navigator as { userLanguage?: string }).userLanguage || 'en';
   const lang = browserLang.toLowerCase().split('-')[0];
 
-  // Return appropriate language or default to English
+  // Return appropriate language or default to Russian (Yandex default)
   if (lang === 'ru') return 'ru';
   if (lang === 'ko') return 'ko';
   if (lang === 'ja') return 'ja';
   if (lang === 'th') return 'th';
-  return 'en';
+  if (lang === 'en') return 'en';
+  return 'ru'; // Default to Russian for Yandex Games
+}
+
+// Set language from Yandex SDK
+export function setLanguageFromYandex(yandexLang: string): void {
+  const lang = yandexLang.toLowerCase().split('-')[0];
+  if (lang === 'ru') i18n.setLanguage('ru');
+  else if (lang === 'ko') i18n.setLanguage('ko');
+  else if (lang === 'ja') i18n.setLanguage('ja');
+  else if (lang === 'th') i18n.setLanguage('th');
+  else if (lang === 'en') i18n.setLanguage('en');
+  else i18n.setLanguage('ru'); // Default to Russian for Yandex
 }
 
 class I18n {
@@ -434,6 +459,8 @@ class I18n {
   formatCellsCount(count: number): string {
     return this.format(this.t.cellsCount, { count });
   }
+
+  get noScoresYet(): string { return this.t.noScoresYet; }
 }
 
 // Singleton instance

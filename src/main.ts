@@ -1,31 +1,59 @@
 import { Game } from './game';
 import { yandex } from './yandex';
 import { ChristmasEmojiBackground } from './christmasEmoji';
+import { setLanguageFromYandex } from './i18n';
 
 // Prevent context menu and text selection on mobile (Yandex Games requirement 1.6.2.7)
-document.addEventListener('contextmenu', (e) => e.preventDefault(), { capture: true });
-document.addEventListener('selectstart', (e) => e.preventDefault(), { capture: true });
-document.addEventListener('dragstart', (e) => e.preventDefault(), { capture: true });
+const preventEvent = (e: Event) => {
+  e.preventDefault();
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+  return false;
+};
 
-// Extra prevention for long-press context menu on mobile
-let longPressTimer: ReturnType<typeof setTimeout> | null = null;
-document.addEventListener('touchstart', () => {
-  longPressTimer = setTimeout(() => {
-    // Do nothing - just prevent default long-press behavior
-  }, 500);
-}, { passive: true });
+// Block all context menu triggers
+document.addEventListener('contextmenu', preventEvent, { capture: true });
+document.addEventListener('selectstart', preventEvent, { capture: true });
+document.addEventListener('dragstart', preventEvent, { capture: true });
+document.addEventListener('copy', preventEvent, { capture: true });
+document.addEventListener('cut', preventEvent, { capture: true });
+
+// Block long-press on touch devices
+let touchTimer: ReturnType<typeof setTimeout> | null = null;
+
+document.addEventListener('touchstart', (e) => {
+  // Clear any existing timer
+  if (touchTimer) clearTimeout(touchTimer);
+
+  // Prevent default to stop long-press menu
+  e.preventDefault();
+
+  // Set a timer to cancel if user holds too long (backup prevention)
+  touchTimer = setTimeout(() => {
+    touchTimer = null;
+  }, 400);
+}, { passive: false, capture: true });
+
 document.addEventListener('touchend', () => {
-  if (longPressTimer) {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
+  if (touchTimer) {
+    clearTimeout(touchTimer);
+    touchTimer = null;
   }
-}, { passive: true });
+}, { passive: true, capture: true });
+
+document.addEventListener('touchcancel', () => {
+  if (touchTimer) {
+    clearTimeout(touchTimer);
+    touchTimer = null;
+  }
+}, { passive: true, capture: true });
+
 document.addEventListener('touchmove', () => {
-  if (longPressTimer) {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
+  if (touchTimer) {
+    clearTimeout(touchTimer);
+    touchTimer = null;
   }
-}, { passive: true });
+}, { passive: true, capture: true });
 
 // Initialize Yandex SDK before starting game
 yandex.init().then(() => {
@@ -33,5 +61,12 @@ yandex.init().then(() => {
   new ChristmasEmojiBackground(10);
 
   const game = new Game();
+
+  // Set language from Yandex SDK and refresh UI
+  if (yandex.isAvailable) {
+    setLanguageFromYandex(yandex.language);
+    game.refreshUI();
+  }
+
   game.start();
 });

@@ -210,17 +210,14 @@ class YandexManager {
     });
   }
 
-  // Submit score to Yandex leaderboard
+  // Submit score to Yandex leaderboard (time type, 3 digits = milliseconds)
   async submitToYandexLeaderboard(timeMs: number): Promise<void> {
     if (!this.leaderboards) return;
 
     try {
-      // Yandex leaderboards use integer scores, higher = better
-      // For time-based games, we invert: score = MAX_TIME - time
-      // Using 1000000ms (1000s) as max, so faster times = higher scores
-      const score = Math.max(0, 1000000 - timeMs);
-      await this.leaderboards.setLeaderboardScore('main', score);
-      console.log('[Yandex] Score submitted:', score);
+      // Yandex time leaderboard: lower = better, score is in milliseconds
+      await this.leaderboards.setLeaderboardScore('main', Math.round(timeMs));
+      console.log('[Yandex] Score submitted:', timeMs, 'ms');
     } catch (e) {
       console.error('[Yandex] Failed to submit score:', e);
     }
@@ -239,8 +236,7 @@ class YandexManager {
       return result.entries.map((entry) => ({
         rank: entry.rank,
         name: entry.player.publicName,
-        // Convert score back to time: time = MAX_TIME - score
-        timeMs: 1000000 - entry.score,
+        timeMs: entry.score, // Score is already in milliseconds
       }));
     } catch (e) {
       console.error('[Yandex] Failed to get leaderboard:', e);
