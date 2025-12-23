@@ -57,16 +57,14 @@ document.addEventListener('touchmove', () => {
 
 // Initialize Yandex SDK before starting game
 yandex.init().then(() => {
+  // Set language from Yandex SDK BEFORE creating game UI
+  if (yandex.isAvailable) {
+    setLanguageFromYandex(yandex.language);
+  }
+
   // Create background with floating Christmas emojis (reduced for mobile perf)
   new ChristmasEmojiBackground(10);
 
   const game = new Game();
-
-  // Set language from Yandex SDK and refresh UI
-  if (yandex.isAvailable) {
-    setLanguageFromYandex(yandex.language);
-    game.refreshUI();
-  }
-
   game.start();
 });

@@ -892,11 +892,11 @@ export class Game {
       cursor: pointer;
     `;
     screen.innerHTML = `
-      <h1 style="font-size: 3rem; margin-bottom: 1rem; color: #ff6633;">${i18n.gameOver}</h1>
+      <h1 id="game-over-title" style="font-size: 3rem; margin-bottom: 1rem; color: #ff6633;">${i18n.gameOver}</h1>
       <p id="game-over-reason" style="font-size: 1.2rem; color: #ffcc88; margin-bottom: 1rem;"></p>
       <p id="game-over-stats" style="font-size: 1rem; color: #88cc88; margin-bottom: 1rem;"></p>
       <p id="game-over-streak" style="font-size: 1rem; color: #ffaa66; margin-bottom: 2rem;"></p>
-      <p style="font-size: 1rem; color: #66aa66;">${i18n.tapToTryAgain}</p>
+      <p id="game-over-tap" style="font-size: 1rem; color: #66aa66;">${i18n.tapToTryAgain}</p>
     `;
     screen.addEventListener('click', () => this.returnToTitle());
     screen.addEventListener('touchstart', (e) => {
@@ -926,7 +926,7 @@ export class Game {
       cursor: pointer;
     `;
     screen.innerHTML = `
-      <h1 style="font-size: 3rem; margin-bottom: 1rem; color: #66dd66;">${i18n.youWin}</h1>
+      <h1 id="win-title" style="font-size: 3rem; margin-bottom: 1rem; color: #66dd66;">${i18n.youWin}</h1>
       <p id="win-stats" style="font-size: 1.2rem; color: #ffcc88; margin-bottom: 1rem;"></p>
       <p id="win-leaderboard" style="font-size: 1rem; color: #ffdd44; margin-bottom: 0.5rem; display: none;"></p>
       <p id="win-streak" style="font-size: 1rem; color: #ffaa66; margin-bottom: 1.5rem;"></p>
@@ -954,9 +954,9 @@ export class Game {
           font-weight: bold;
           box-shadow: 0 2px 8px rgba(255, 102, 0, 0.4);
           display: none;
-        ">📹 Save Clip</button>
+        ">📹 ${i18n.saveClip}</button>
       </div>
-      <p style="font-size: 1rem; color: #66aa66;">${i18n.tapToPlayAgain}</p>
+      <p id="win-tap" style="font-size: 1rem; color: #66aa66;">${i18n.tapToPlayAgain}</p>
     `;
 
     // Handle share button
@@ -1026,6 +1026,24 @@ export class Game {
       }
       // Load leaderboard
       this.loadLeaderboard();
+    }
+
+    // Update game over screen texts (for language changes)
+    if (screen === 'game_over') {
+      const titleEl = this.gameOverScreen.querySelector('#game-over-title') as HTMLElement;
+      const tapEl = this.gameOverScreen.querySelector('#game-over-tap') as HTMLElement;
+      if (titleEl) titleEl.textContent = i18n.gameOver;
+      if (tapEl) tapEl.textContent = i18n.tapToTryAgain;
+    }
+
+    // Update win screen texts (for language changes)
+    if (screen === 'win') {
+      const titleEl = this.winScreen.querySelector('#win-title') as HTMLElement;
+      const tapEl = this.winScreen.querySelector('#win-tap') as HTMLElement;
+      const shareBtn = this.winScreen.querySelector('#share-btn') as HTMLElement;
+      if (titleEl) titleEl.textContent = i18n.youWin;
+      if (tapEl) tapEl.textContent = i18n.tapToPlayAgain;
+      if (shareBtn) shareBtn.textContent = i18n.share;
     }
   }
 
@@ -1464,12 +1482,12 @@ export class Game {
     if (downloadClipBtn && this.recorder) {
       downloadClipBtn.style.display = 'block';
       downloadClipBtn.disabled = true;
-      downloadClipBtn.textContent = '⏳ Saving...';
+      downloadClipBtn.textContent = `⏳ ${i18n.savingClip}`;
 
       // Delay stopping recording to capture final peel animation and juice burst
       this.finalizeRecording().then(() => {
         downloadClipBtn.disabled = false;
-        downloadClipBtn.textContent = '📹 Save Clip';
+        downloadClipBtn.textContent = `📹 ${i18n.saveClip}`;
       });
     } else if (downloadClipBtn) {
       downloadClipBtn.style.display = this.lastRecordedBlob ? 'block' : 'none';
