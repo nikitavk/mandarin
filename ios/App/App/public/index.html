@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Mandarin</title>
+
+    <!-- Open Graph / Telegram link preview -->
+    <meta property="og:title" content="🍊 Mandarin - Peel it in one touch!" />
+    <meta property="og:description" content="Can you peel a mandarin without lifting your finger? A Christmas mini-game challenge!" />
+    <meta property="og:image" content="https://mandarin-game.pages.dev/preview.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:url" content="https://www.crazygames.com/game/mandarin" />
+    <meta property="og:type" content="website" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="🍊 Mandarin - Peel it in one touch!" />
+    <meta name="twitter:description" content="Can you peel a mandarin without lifting your finger? A Christmas mini-game challenge!" />
+    <meta name="twitter:image" content="https://mandarin-game.pages.dev/preview.png" />
+
+    <!-- CrazyGames SDK -->
+    <script src="https://sdk.crazygames.com/crazygames-sdk-v2.js"></script>
+    <style>
+      @keyframes pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.1); }
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html, body {
+        overflow: hidden;
+        position: fixed;
+        width: 100%;
+        height: 100%;
+        touch-action: none;
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+        overscroll-behavior: none;
+        background-color: #0d2818;
+      }
+      /* Prevent text selection and context menu on all elements */
+      * {
+        -webkit-touch-callout: none;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      canvas {
+        display: block;
+        touch-action: none;
+      }
+      @supports (padding: env(safe-area-inset-top)) {
+        body {
+          padding-top: env(safe-area-inset-top);
+          padding-left: env(safe-area-inset-left);
+          padding-right: env(safe-area-inset-right);
+          /* No bottom padding - let background color fill the home indicator area */
+        }
+      }
+    </style>
+    <script type="module" crossorigin src="./assets/index-CIWwfkI8.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/three-BjcdYgkX.js">
+  </head>
+  <body>
+    <div id="loading-screen" style="
+      position: fixed;
+      inset: 0;
+      background: #0d2818;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    ">
+      <div style="font-size: 4rem; animation: pulse 1s ease-in-out infinite;">🍊</div>
+      <div style="color: #ffaa00; margin-top: 1rem; font-family: sans-serif;">Loading...</div>
+    </div>
+  </body>
+</html>
