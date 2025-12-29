@@ -22,6 +22,11 @@ interface YandexLeaderboards {
       player: { publicName: string; uniqueID: string };
     }>;
   }>;
+  getLeaderboardPlayerEntry(leaderboardName: string): Promise<{
+    score: number;
+    rank: number;
+    player: { publicName: string; uniqueID: string };
+  }>;
   setLeaderboardScore(leaderboardName: string, score: number): Promise<void>;
 }
 
@@ -210,16 +215,41 @@ class YandexManager {
     });
   }
 
-  // Submit score to Yandex leaderboard (time type, 3 digits = milliseconds)
-  async submitToYandexLeaderboard(timeMs: number): Promise<void> {
-    if (!this.leaderboards) return;
+  // Get player's current best time from Yandex leaderboard
+  async getPlayerBestTimeMs(): Promise<number | null> {
+    if (!this.leaderboards) return null;
 
     try {
+      const entry = await this.leaderboards.getLeaderboardPlayerEntry('main');
+      return entry.score;
+    } catch (e) {
+      // LEADERBOARD_PLAYER_NOT_PRESENT means player has no entry yet
+      console.log('[Yandex] Player has no leaderboard entry yet');
+      return null;
+    }
+  }
+
+  // Submit score to Yandex leaderboard (time type, 3 digits = milliseconds)
+  // Only submits if the new time is better (lower) than the current best
+  async submitToYandexLeaderboard(timeMs: number): Promise<boolean> {
+    if (!this.leaderboards) return false;
+
+    try {
+      // Check if this is a new record (lower time = better)
+      const currentBestMs = await this.getPlayerBestTimeMs();
+      if (currentBestMs !== null && timeMs >= currentBestMs) {
+        console.log('[Yandex] Score not submitted (not a new record):', timeMs, 'ms >=', currentBestMs, 'ms');
+        return false;
+      }
+
       // Yandex time leaderboard: lower = better, score is in milliseconds
       await this.leaderboards.setLeaderboardScore('main', Math.round(timeMs));
-      console.log('[Yandex] Score submitted:', timeMs, 'ms');
+      console.log('[Yandex] New record submitted:', timeMs, 'ms');
+
+      return true;
     } catch (e) {
       console.error('[Yandex] Failed to submit score:', e);
+      return false;
     }
   }
 
